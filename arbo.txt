@@ -1,0 +1,51 @@
+# quant-portfolio
+
+quant-portfolio/
+├─ pyproject.toml
+├─ README.md
+├─ .env                       # DB_URL, chemins data, etc.
+├─ config/
+│  ├─ base.yaml               # chemins + paramètres globaux
+│  ├─ regimes.yaml            # K états, fenêtres, features
+│  ├─ backtest.yaml           # coûts, turnover, rebal
+│  └─ mc.yaml                 # nb sims, horizons, dist (t)
+├─ sql/
+│  ├─ schema.sql              # création des tables
+│  └─ views.sql               # vues utiles (joins propres)
+├─ src/
+│  ├─ python/
+│  │  ├─ main.py              # entrypoint (CLI)
+│  │  ├─ core/
+│  │  │  ├─ settings.py        # lit YAML + .env
+│  │  │  ├─ db.py              # connexion + fonctions DB
+│  │  │  ├─ storage.py         # I/O Parquet (paths standards)
+│  │  │  └─ ids.py             # run_id, hash configs, etc.
+│  │  ├─ pipeline/
+│  │  │  ├─ ingest.py          # import prix -> parquet/db
+│  │  │  ├─ features.py        # build features
+│  │  │  ├─ regimes.py         # fit HMM / clustering
+│  │  │  ├─ mc.py              # MC conditionnel au régime
+│  │  │  ├─ optimize.py        # allocation
+│  │  │  ├─ backtest.py        # exécution + logs
+│  │  │  └─ report.py          # rapport final
+│  │  └─ models/
+│  │     ├─ hmm.py
+│  │     └─ covariance.py      # shrinkage, etc.
+│  └─ cpp/
+│     ├─ CMakeLists.txt
+│     ├─ include/
+│     ├─ src/
+│     │  ├─ mc_engine.cpp       # MC multivarié (t / gaussian)
+│     │  └─ optim.cpp           # solveur poids
+│     └─ bindings/
+│        └─ pybind_module.cpp   # pybind11 pour appeler depuis Python
+├─ data/
+│  ├─ raw/                     # fichiers bruts
+│  ├─ parquet/
+│  │  ├─ prices/
+│  │  ├─ features/
+│  │  ├─ regimes/
+│  │  ├─ mc/
+│  │  └─ backtests/
+│  └─ artifacts/               # rapports pdf, figures
+└─ notebooks/                  # exploration (optionnel)
