@@ -48,4 +48,4 @@ quant-portfolio/
 │  │  ├─ mc/
 │  │  └─ backtests/
 │  └─ artifacts/               # rapports pdf, figures
-└─ notebooks/                  # exploration (optionnel)
+└─ notebooks/                  # exploration
