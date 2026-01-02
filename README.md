@@ -26,8 +26,8 @@ L’objectif n’est pas de “prédire le futur” au sens naïf. L’objectif 
   - [Backtesting Protocol](#backtesting-protocol)
     - [Baselines / Ablations](#baselines--ablations)
   - [Storage Strategy](#storage-strategy)
-    - [Minimal SQL DB (current)](#minimal-sql-db-current)
-    - [File Storage (recommended)](#file-storage-recommended)
+    - [Minimal SQL DB](#minimal-sql-db)
+    - [File Storage](#file-storage)
   - [Outputs](#outputs)
   - [Project Structure](#project-structure)
 
@@ -104,7 +104,7 @@ A minimal SQL database is used only as a **freshness cache**:
 - stores the last available price date per ticker
 - prevents redundant re-downloads
 
-> The heavy time-series (prices/features) are stored in files (e.g., Parquet/CSV). The SQL DB remains lightweight.
+> The heavy time-series (prices/features) are stored in files (Parquet). The SQL DB remains lightweight.
 
 ---
 
@@ -236,11 +236,11 @@ To avoid fooling ourselves:
 
 ## Storage Strategy
 
-### Minimal SQL DB (current)
+### Minimal SQL DB
 Used only for:
 - `ticker → last_available_date`
 
-### File Storage (recommended)
+### File Storage
 Store heavy objects in files:
 - prices, returns
 - features
@@ -249,7 +249,7 @@ Store heavy objects in files:
 - weights, trades
 - backtest results
 
-Parquet is ideal; CSV is acceptable for MVP.
+Parquet is ideal.
 
 ---
 
