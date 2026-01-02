@@ -119,7 +119,7 @@ def download_one(ticker: str, start: str | None, end: str | None = None) -> pd.D
 def upsert_last_dates(conn: sqlite3.Connection, df: pd.DataFrame) -> int:
     if df.empty:
         return 0
-
+    df_max = df.where(datetime.max())
     sql = """
     INSERT INTO last_dates (ticker, date, open, high, low, close, adj_close, volume)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -131,11 +131,31 @@ def upsert_last_dates(conn: sqlite3.Connection, df: pd.DataFrame) -> int:
       adj_close = excluded.adj_close,
       volume    = excluded.volume;
     """
-    rows = list(df.itertuples(index=False, name=None))
+    rows = list(df_max.itertuples(index=False, name=None))
     conn.executemany(sql, rows)
     conn.commit()
     return len(rows)
 
+
+def upsert_prices(df: pd.DataFrame):
+    table = pa.Table.from_pandas(df, preserve_index=False)
+    # --- Write as a Hive-partitioned Parquet dataset ---
+    partitioning = ds.partitioning(
+        pa.schema([
+            ("asset", pa.string()),
+            ("year", pa.int32()),
+        ]),
+        flavor="hive",
+    )
+
+    ds.write_dataset(
+        table,
+        base_dir=str(out_dir),
+        format="parquet",
+        partitioning=partitioning,
+        existing_data_behavior="overwrite_or_ignore",  # pratique en dev
+    )
+    return len(table)
 
 def normalize_yf(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
     # yfinance -> colonnes standard: Open High Low Close Adj Close Volume
@@ -153,12 +173,13 @@ def normalize_yf(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
     # garde uniquement les colonnes utiles
     return out[["ticker","date","open","high","low","close","adj_close","volume"]]
 
+
 def main():
     conn = sqlite3.connect(DB_PATH)
     init_db(conn)
 
     total = 0
-    for t in TICKERS:
+    for t in tickers_2024:
         last = get_last_date(conn, t)
         if last is None:
             start = "2000-01-01"  # ou une date plus récente si tu veux
@@ -169,6 +190,7 @@ def main():
 
         df = download_one(t, start=start)
         df2 = normalize_yf(df, t)
+        last_date = upsert_last_dates(conn, df2)
         inserted = upsert_prices(conn, df2)
         total += inserted
         print(f"{t}: last={last} start={start} -> {inserted} rows")
