@@ -1,13 +1,14 @@
-import pyarrow as pa
-import pyarrow.dataset as ds
-import pyarrow.parquet as pq
-import pandas as pd
+import sqlite3
+from datetime import datetime, timedelta
 from pathlib import Path
 import shutil
-from datetime import datetime, timedelta
+
 import numpy as np
+import pandas as pd
+import pyarrow as pa
+import pyarrow.dataset as ds
 import yfinance as yf
-import sqlite3
+
 
 # --- Output dataset directory ---
 out_dir = Path("data/parquet/prices")
@@ -17,6 +18,8 @@ if CLEAN_PARQUET and out_dir.exists():
 out_dir.mkdir(parents=True, exist_ok=True)
 
 DB_PATH = Path("data/_meta.db")
+DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+
 
 tickers_2024 = [
     "PDD",          # PDD Holdings
@@ -77,21 +80,22 @@ tickers_2024 = [
 ]
 
 
-
 def init_db(conn: sqlite3.Connection) -> None:
-    conn.execute("""
-    CREATE TABLE IF NOT EXISTS last_dates (
-      ticker     TEXT NOT NULL,
-      date       TEXT NOT NULL,  -- YYYY-MM-DD
-      open       REAL,
-      high       REAL,
-      low        REAL,
-      close      REAL,
-      adj_close  REAL,
-      volume     INTEGER,
-      PRIMARY KEY (ticker, date)
-    );
-    """)
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS last_dates (
+          ticker     TEXT NOT NULL,
+          date       TEXT NOT NULL,  -- YYYY-MM-DD
+          open       REAL,
+          high       REAL,
+          low        REAL,
+          close      REAL,
+          adj_close  REAL,
+          volume     INTEGER,
+          PRIMARY KEY (ticker, date)
+        );
+        """
+    )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_last_dates_ticker ON last_dates(ticker);")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_last_dates_date ON last_dates(date);")
     conn.commit()
@@ -100,13 +104,14 @@ def init_db(conn: sqlite3.Connection) -> None:
 def get_last_date(conn: sqlite3.Connection, ticker: str) -> str | None:
     row = conn.execute(
         "SELECT MAX(date) FROM last_dates WHERE ticker = ?",
-        (ticker,)
+        (ticker,),
     ).fetchone()
     return row[0]  # "YYYY-MM-DD" ou None
 
 
 def download_one(ticker: str, start: str | None, end: str | None = None) -> pd.DataFrame:
     # auto_adjust=False pour garder Adj Close
+    # group_by='column' => si MultiIndex, le niveau 0 = champ (Open/High/...), niveau 1 = ticker
     return yf.download(
         ticker,
         start=start,
@@ -115,7 +120,79 @@ def download_one(ticker: str, start: str | None, end: str | None = None) -> pd.D
         progress=False,
         interval="1d",
         actions=False,
+        group_by="column",
     )
+
+
+def normalize_yf(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
+    """Normalize a yfinance OHLCV frame to our canonical schema.
+
+    Handles both:
+      - Standard columns: Open/High/Low/Close/Adj Close/Volume
+      - MultiIndex columns (when yfinance returns (field, ticker))
+
+    Output columns:
+      ticker, date (YYYY-MM-DD), year (int32), open, high, low, close, adj_close, volume (int64)
+    """
+
+    cols = ["ticker", "date", "year", "open", "high", "low", "close", "adj_close", "volume"]
+
+    if df is None or df.empty:
+        return pd.DataFrame(columns=cols)
+
+    # --- Flatten/Select in case yfinance returns MultiIndex columns ---
+    if isinstance(df.columns, pd.MultiIndex):
+        # Common case: columns are (field, ticker)
+        lvl_last = df.columns.get_level_values(-1)
+        if ticker in set(lvl_last):
+            df = df.xs(ticker, axis=1, level=-1, drop_level=True)
+        else:
+            # Fallback: keep first level names
+            df = df.copy()
+            df.columns = [c[0] for c in df.columns]
+
+    # Ensure index is the date
+    df = df.copy()
+    df.index.name = "date"
+    out = df.reset_index()
+
+    # Normalize column names (case/spacing)
+    def _norm(c: object) -> str:
+        s = str(c).strip()
+        s = s.replace("Adj Close", "Adj_Close")
+        return s.lower().replace(" ", "_")
+
+    out.columns = [_norm(c) for c in out.columns]
+
+    # Some yfinance variants may use 'adjclose'
+    if "adjclose" in out.columns and "adj_close" not in out.columns:
+        out = out.rename(columns={"adjclose": "adj_close"})
+
+    required = {"date", "open", "high", "low", "close", "adj_close", "volume"}
+    if not required.issubset(set(out.columns)):
+        return pd.DataFrame(columns=cols)
+
+    # Parse dates first, drop invalid rows BEFORE casting year
+    dt = pd.to_datetime(out["date"], errors="coerce")
+    ok = dt.notna()
+    out = out.loc[ok].copy()
+    dt = dt.loc[ok]
+
+    out["ticker"] = ticker
+    out["date"] = dt.dt.strftime("%Y-%m-%d")
+    out["year"] = dt.dt.year.astype("int32")
+
+    # Ensure numeric dtypes
+    for c in ["open", "high", "low", "close", "adj_close"]:
+        out[c] = pd.to_numeric(out[c], errors="coerce")
+
+    vol = out["volume"]
+    # If duplicate columns created a DataFrame slice, take the first one
+    if isinstance(vol, pd.DataFrame):
+        vol = vol.iloc[:, 0]
+    out["volume"] = pd.to_numeric(vol, errors="coerce").fillna(0).astype("int64")
+
+    return out[cols]
 
 
 def upsert_last_dates(conn: sqlite3.Connection, df: pd.DataFrame) -> str | None:
@@ -123,10 +200,9 @@ def upsert_last_dates(conn: sqlite3.Connection, df: pd.DataFrame) -> str | None:
 
     Returns the latest date (YYYY-MM-DD) or None.
     """
-    if df.empty:
+    if df is None or df.empty:
         return None
 
-    # df already has 'ticker' and 'date' (YYYY-MM-DD)
     df_last = df.sort_values("date").tail(1)
     last_date = df_last.iloc[0]["date"]
 
@@ -163,22 +239,25 @@ def upsert_prices(df: pd.DataFrame) -> int:
 
     Dataset layout: data/parquet/prices/ticker=XXX/year=YYYY/*.parquet
     """
-    if df.empty:
+    if df is None or df.empty:
         return 0
 
     # Ensure required partition columns exist
     if "year" not in df.columns:
         dt = pd.to_datetime(df["date"], errors="coerce")
-        df = df.copy()
-        df["year"] = dt.dt.year.astype("int32")
+        ok = dt.notna()
+        df = df.loc[ok].copy()
+        df["year"] = dt.loc[ok].dt.year.astype("int32")
 
     table = pa.Table.from_pandas(df, preserve_index=False)
 
     partitioning = ds.partitioning(
-        pa.schema([
-            ("ticker", pa.string()),
-            ("year", pa.int32()),
-        ]),
+        pa.schema(
+            [
+                ("ticker", pa.string()),
+                ("year", pa.int32()),
+            ]
+        ),
         flavor="hive",
     )
 
@@ -199,27 +278,8 @@ def upsert_prices(df: pd.DataFrame) -> int:
 
     return table.num_rows
 
-def normalize_yf(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
-    # yfinance -> colonnes standard: Open High Low Close Adj Close Volume
-    out = df.reset_index().rename(columns={
-        "Date": "date",
-        "Open": "open",
-        "High": "high",
-        "Low": "low",
-        "Close": "close",
-        "Adj Close": "adj_close",
-        "Volume": "volume",
-    })
-    out["ticker"] = ticker
-    dt = pd.to_datetime(out["date"], errors="coerce")
-    out["date"] = dt.dt.strftime("%Y-%m-%d")
-    out["year"] = dt.dt.year.astype("int32")
-    # Ensure volume is integer-ish (yfinance can return floats/NaN)
-    out["volume"] = pd.to_numeric(out["volume"], errors="coerce").fillna(0).astype("int64")
-    return out[["ticker","date","year","open","high","low","close","adj_close","volume"]]
 
-
-def main():
+def main() -> None:
     conn = sqlite3.connect(DB_PATH)
     init_db(conn)
 
@@ -235,10 +295,16 @@ def main():
 
         df = download_one(t, start=start)
         df2 = normalize_yf(df, t)
+
         new_last = upsert_last_dates(conn, df2)
         inserted = upsert_prices(df2)
         total += inserted
+
         print(f"{t}: last={last} start={start} -> {inserted} rows  |  New last date: {new_last}")
 
     conn.close()
     print(f"Done. Total rows upserted: {total}")
+
+
+if __name__ == "__main__":
+    main()
