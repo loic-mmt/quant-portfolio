@@ -1,6 +1,6 @@
 # Regime-Aware Dynamic Equity Portfolio (Python + C++ + SQL cache)
 
-Un système quant **pro**, reproductible, et orienté “risk-first” pour gérer un portefeuille **long-only** de **40–50 actions** sur une période cible d’**1 an** (01/01 → 31/12), avec une allocation qui **s’adapte aux régimes de marché** et un **contrôle du risque** au quotidien.
+Un système quant, reproductible, et orienté “risk-first” pour gérer un portefeuille **long-only** de **40–50 actions** sur une période cible d’**1 an** (01/01 → 31/12), avec une allocation qui **s’adapte aux régimes de marché** et un **contrôle du risque** au quotidien.
 
 L’objectif n’est pas de “prédire le futur” au sens naïf. L’objectif est de **détecter l’état du marché**, **quantifier le risque futur** (distribution), puis **ajuster l’exposition** et les poids de façon disciplinée.
 
@@ -265,5 +265,4 @@ Parquet is ideal.
 ---
 
 ## Project Structure
-
-Typical structure (may vary):
+...
