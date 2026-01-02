@@ -193,7 +193,7 @@ def main():
         last_date = upsert_last_dates(conn, df2)
         inserted = upsert_prices(conn, df2)
         total += inserted
-        print(f"{t}: last={last} start={start} -> {inserted} rows")
+        print(f"{t}: last={last} start={start} -> {inserted} rows  |  New last date : {last_date}")
 
     conn.close()
     print(f"Done. Total rows upserted: {total}")
