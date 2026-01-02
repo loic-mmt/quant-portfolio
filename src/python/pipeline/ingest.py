@@ -11,7 +11,8 @@ import sqlite3
 
 # --- Output dataset directory ---
 out_dir = Path("data/parquet/prices")
-if out_dir.exists():
+CLEAN_PARQUET = False  # set True only if you want to reset the dataset
+if CLEAN_PARQUET and out_dir.exists():
     shutil.rmtree(out_dir)
 out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -81,7 +82,7 @@ def init_db(conn: sqlite3.Connection) -> None:
     conn.execute("""
     CREATE TABLE IF NOT EXISTS last_dates (
       ticker     TEXT NOT NULL,
-      date       TEXT NOT NULL,
+      date       TEXT NOT NULL,  -- YYYY-MM-DD
       open       REAL,
       high       REAL,
       low        REAL,
@@ -91,7 +92,8 @@ def init_db(conn: sqlite3.Connection) -> None:
       PRIMARY KEY (ticker, date)
     );
     """)
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_prices_date ON prices(date);")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_last_dates_ticker ON last_dates(ticker);")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_last_dates_date ON last_dates(date);")
     conn.commit()
 
 
@@ -116,10 +118,18 @@ def download_one(ticker: str, start: str | None, end: str | None = None) -> pd.D
     )
 
 
-def upsert_last_dates(conn: sqlite3.Connection, df: pd.DataFrame) -> int:
+def upsert_last_dates(conn: sqlite3.Connection, df: pd.DataFrame) -> str | None:
+    """Store ONLY the latest available date for this ticker in SQLite.
+
+    Returns the latest date (YYYY-MM-DD) or None.
+    """
     if df.empty:
-        return 0
-    df_max = df.where(datetime.max())
+        return None
+
+    # df already has 'ticker' and 'date' (YYYY-MM-DD)
+    df_last = df.sort_values("date").tail(1)
+    last_date = df_last.iloc[0]["date"]
+
     sql = """
     INSERT INTO last_dates (ticker, date, open, high, low, close, adj_close, volume)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -131,31 +141,63 @@ def upsert_last_dates(conn: sqlite3.Connection, df: pd.DataFrame) -> int:
       adj_close = excluded.adj_close,
       volume    = excluded.volume;
     """
-    rows = list(df_max.itertuples(index=False, name=None))
-    conn.executemany(sql, rows)
+
+    row = (
+        df_last.iloc[0]["ticker"],
+        df_last.iloc[0]["date"],
+        float(df_last.iloc[0]["open"]) if pd.notna(df_last.iloc[0]["open"]) else None,
+        float(df_last.iloc[0]["high"]) if pd.notna(df_last.iloc[0]["high"]) else None,
+        float(df_last.iloc[0]["low"]) if pd.notna(df_last.iloc[0]["low"]) else None,
+        float(df_last.iloc[0]["close"]) if pd.notna(df_last.iloc[0]["close"]) else None,
+        float(df_last.iloc[0]["adj_close"]) if pd.notna(df_last.iloc[0]["adj_close"]) else None,
+        int(df_last.iloc[0]["volume"]) if pd.notna(df_last.iloc[0]["volume"]) else None,
+    )
+
+    conn.execute(sql, row)
     conn.commit()
-    return len(rows)
+    return last_date
 
 
-def upsert_prices(df: pd.DataFrame):
+def upsert_prices(df: pd.DataFrame) -> int:
+    """Append the new batch to a Hive-partitioned Parquet dataset.
+
+    Dataset layout: data/parquet/prices/ticker=XXX/year=YYYY/*.parquet
+    """
+    if df.empty:
+        return 0
+
+    # Ensure required partition columns exist
+    if "year" not in df.columns:
+        dt = pd.to_datetime(df["date"], errors="coerce")
+        df = df.copy()
+        df["year"] = dt.dt.year.astype("int32")
+
     table = pa.Table.from_pandas(df, preserve_index=False)
-    # --- Write as a Hive-partitioned Parquet dataset ---
+
     partitioning = ds.partitioning(
         pa.schema([
-            ("asset", pa.string()),
+            ("ticker", pa.string()),
             ("year", pa.int32()),
         ]),
         flavor="hive",
     )
+
+    # Unique filenames per batch to avoid overwriting older fragments
+    ticker = str(df["ticker"].iloc[0])
+    dmin = str(df["date"].min())
+    dmax = str(df["date"].max())
+    basename_template = f"{ticker}_{dmin}_{dmax}_{{i}}.parquet"
 
     ds.write_dataset(
         table,
         base_dir=str(out_dir),
         format="parquet",
         partitioning=partitioning,
-        existing_data_behavior="overwrite_or_ignore",  # pratique en dev
+        basename_template=basename_template,
+        existing_data_behavior="overwrite_or_ignore",
     )
-    return len(table)
+
+    return table.num_rows
 
 def normalize_yf(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
     # yfinance -> colonnes standard: Open High Low Close Adj Close Volume
@@ -169,9 +211,12 @@ def normalize_yf(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
         "Volume": "volume",
     })
     out["ticker"] = ticker
-    out["date"] = pd.to_datetime(out["date"]).dt.strftime("%Y-%m-%d")
-    # garde uniquement les colonnes utiles
-    return out[["ticker","date","open","high","low","close","adj_close","volume"]]
+    dt = pd.to_datetime(out["date"], errors="coerce")
+    out["date"] = dt.dt.strftime("%Y-%m-%d")
+    out["year"] = dt.dt.year.astype("int32")
+    # Ensure volume is integer-ish (yfinance can return floats/NaN)
+    out["volume"] = pd.to_numeric(out["volume"], errors="coerce").fillna(0).astype("int64")
+    return out[["ticker","date","year","open","high","low","close","adj_close","volume"]]
 
 
 def main():
@@ -182,7 +227,7 @@ def main():
     for t in tickers_2024:
         last = get_last_date(conn, t)
         if last is None:
-            start = "2000-01-01"  # ou une date plus récente si tu veux
+            start = "2019-01-01"
         else:
             # on repart du lendemain (évite de recharger inutilement)
             start_dt = datetime.strptime(last, "%Y-%m-%d") + timedelta(days=1)
@@ -190,10 +235,10 @@ def main():
 
         df = download_one(t, start=start)
         df2 = normalize_yf(df, t)
-        last_date = upsert_last_dates(conn, df2)
-        inserted = upsert_prices(conn, df2)
+        new_last = upsert_last_dates(conn, df2)
+        inserted = upsert_prices(df2)
         total += inserted
-        print(f"{t}: last={last} start={start} -> {inserted} rows  |  New last date : {last_date}")
+        print(f"{t}: last={last} start={start} -> {inserted} rows  |  New last date: {new_last}")
 
     conn.close()
     print(f"Done. Total rows upserted: {total}")
