@@ -1,227 +1,269 @@
-# quant-portfolio
+# Regime-Aware Dynamic Equity Portfolio (Python + C++ + SQL cache)
 
-⸻
+Un système quant **pro**, reproductible, et orienté “risk-first” pour gérer un portefeuille **long-only** de **40–50 actions** sur une période cible d’**1 an** (01/01 → 31/12), avec une allocation qui **s’adapte aux régimes de marché** et un **contrôle du risque** au quotidien.
 
-1) Vision du projet
+L’objectif n’est pas de “prédire le futur” au sens naïf. L’objectif est de **détecter l’état du marché**, **quantifier le risque futur** (distribution), puis **ajuster l’exposition** et les poids de façon disciplinée.
 
-But : construire un système quant complet qui :
-	1.	identifie l’état du marché (régime),
-	2.	estime le risque futur (distributions),
-	3.	alloue les poids du portefeuille en conséquence,
-	4.	contrôle le risque au quotidien (overlay),
-	5.	backteste proprement en walk-forward,
-	6.	sort un rapport clair.
+---
 
-⸻
+## Table of Contents
+- [Regime-Aware Dynamic Equity Portfolio (Python + C++ + SQL cache)](#regime-aware-dynamic-equity-portfolio-python--c--sql-cache)
+  - [Table of Contents](#table-of-contents)
+  - [Key Ideas](#key-ideas)
+  - [Project Goals](#project-goals)
+  - [System Overview](#system-overview)
+  - [Data](#data)
+    - [Universe](#universe)
+    - [Frequency](#frequency)
+    - [Incremental Download Cache (SQL)](#incremental-download-cache-sql)
+  - [Pipeline](#pipeline)
+  - [Regime Detection](#regime-detection)
+  - [Risk Modeling (Monte-Carlo)](#risk-modeling-monte-carlo)
+    - [Stored Outputs (summary only)](#stored-outputs-summary-only)
+  - [Dynamic Allocation](#dynamic-allocation)
+    - [Optimization (typical constraints)](#optimization-typical-constraints)
+  - [Risk Overlay](#risk-overlay)
+  - [Backtesting Protocol](#backtesting-protocol)
+    - [Baselines / Ablations](#baselines--ablations)
+  - [Storage Strategy](#storage-strategy)
+    - [Minimal SQL DB (current)](#minimal-sql-db-current)
+    - [File Storage (recommended)](#file-storage-recommended)
+  - [Outputs](#outputs)
+  - [Project Structure](#project-structure)
 
-2) Périmètre
-	•	Univers : 40–50 actions.
-	•	Fréquence : quotidienne (close-to-close).
-	•	Horizon d’investissement : 1 an (janvier → décembre) pour la période d’évaluation “projet”.
-	•	Horizon de décision : multi-horizon :
-	•	estimation régime : 20 jours + 60 jours
-	•	rebalancing : hebdo ou bi-hebdo
-	•	overlay risque : quotidien
+---
 
-⸻
+## Key Ideas
 
-3) Entrées / données
+- **One-year portfolio** does *not* mean one decision horizon.  
+  The system uses **multi-horizon logic**:
+  - **Regime** estimated on **20d** (confirmed by **60d**).
+  - **Rebalancing** weekly / bi-weekly.
+  - **Risk overlay** daily (vol targeting + stress cut).
 
-Données requises
-	•	Prix (Close ajusté idéalement) pour chaque action.
-	•	Calendrier de trading.
-	•	Optionnel : secteurs/industries (pour contraintes de diversification).
+- **Regimes come from real market data**, not from simulations.  
+  Monte-Carlo is used to **quantify risk** *conditional on the regime*, not to generate “scenarios” for a DL model.
 
-⸻
+- **Cross-asset structure matters**.  
+  Regimes are heavily driven by:
+  - average correlations (spike in crises),
+  - dispersion (winners vs losers),
+  - volatility & drawdowns.
 
-4) Pipeline global (de bout en bout)
+---
 
-Étape A — Ingestion & normalisation (Data Layer)
+## Project Goals
 
-Objectif : avoir des séries propres, alignées, sans trous bizarres.
-	•	Téléchargement incremental.
-	•	Normalisation :
-	•	alignement des dates,
-	•	gestion des valeurs manquantes (drop ou forward-fill encadré),
-	•	calcul des retours log ou simples,
-	•	filtrage (période d’entraînement vs test).
+1. Build a **market regime detector** (interpretable states + probabilities).
+2. Build a **risk engine** producing forward risk distributions (VaR/CVaR/probabilities).
+3. Implement a **dynamic allocation engine** that changes policy by regime.
+4. Add a **daily risk overlay** to control tail risk and stabilize volatility.
+5. Produce a **walk-forward backtest** (out-of-sample year as the “project year”).
+6. Generate a final report with:
+   - regime interpretation,
+   - portfolio behavior by regime,
+   - performance/risk metrics,
+   - ablation tests (with/without regimes, with/without overlay, etc.).
 
-Sorties :
-	•	prices (tableau date × ticker)
-	•	returns (date × ticker)
+---
 
-⸻
+## System Overview
 
-1) Feature engineering (Market + Cross-sectional)
+**Inputs**
+- Equity close prices (adjusted if available) for ~40–50 tickers.
+- Market proxy (index / aggregate of universe).
+- Optional: sector tags for diversification constraints.
 
-Tu ne veux pas détecter des régimes sur 50 actions séparément. Tu construis un “Market State” via des agrégats.
+**Core Engines**
+- Feature engineering (market + cross-sectional)
+- Regime detection (HMM / clustering)
+- Risk estimation (regime-conditional Monte-Carlo)
+- Optimization / allocation (constrained)
+- Risk overlay (vol targeting + stress cut)
+- Backtest + analytics
 
-Features “marché”
-	•	Momentum : retours 20j, 60j
-	•	Volatilité réalisée : std 20j, 60j
-	•	Drawdown 20j/60j
-	•	Vol-of-vol : variation de la vol (ex : std(Δvol))
+**Outputs**
+- Daily regime state + probabilities
+- Daily portfolio weights
+- Trades + turnover
+- Performance curve, risk stats, regime attribution
 
-Features cross-actions (très importantes)
-	•	Corrélation moyenne (rolling) entre actions
-→ en stress, les corrélations montent.
-	•	Dispersion : écart-type des retours cross-sectionnels (winners vs losers)
-	•	Breadth : % d’actions au-dessus de leur moyenne 50j/200j
+---
 
-Sorties :
-	•	un dataframe features (date × features)
+## Data
 
-⸻
+### Universe
+- 40–50 equities (long-only).
+- The universe should be fixed for the backtest period (avoid changing constituents if possible).
 
-6) Détection de régimes (le cœur “macro”)
+### Frequency
+- Daily closes (close-to-close returns).
 
-Objectif : produire un state S_t (ex : 3 états) + les probabilités par état.
+### Incremental Download Cache (SQL)
+A minimal SQL database is used only as a **freshness cache**:
+- stores the last available price date per ticker
+- prevents redundant re-downloads
 
-Modèles conseillés
-	•	HMM (Hidden Markov Model) à 3 états : le plus “quant pro” et interprétable.
-	•	Alternative : GMM / clustering si tu veux plus simple.
+> The heavy time-series (prices/features) are stored in files (e.g., Parquet/CSV). The SQL DB remains lightweight.
 
-Exemples d’états attendus (interprétation)
-	•	Régime 1 : Calme / Trend
-vol basse, momentum positif, corr modérée
-	•	Régime 2 : Bruit / Mean reversion
-vol moyenne, momentum faible, dispersion élevée
-	•	Régime 3 : Stress / Risk-off
-vol haute, drawdown, corr élevée
+---
 
-Sorties :
-	•	regime_state[t]
-	•	regime_probabilities[t, k]
-	•	matrice de transition (utile pour anticiper la persistance)
+## Pipeline
 
-⸻
+The project is structured as a deterministic pipeline:
 
-7) Modèle de risque conditionnel (Monte-Carlo “utile”)
+1. **Ingest**
+   - Download missing price data (incremental using the SQL cache).
+   - Align dates, clean missing values, build returns.
 
-L’intérêt de Monte-Carlo ici : quantifier le risque futur, pas générer des chemins pour faire joli.
+2. **Feature Engineering**
+   - Build market features (vol, momentum, drawdown, vol-of-vol).
+   - Build cross-sectional features (avg correlation, dispersion, breadth).
 
-Calibration conditionnelle au régime
+3. **Regime Detection**
+   - Fit/Update regime model on a rolling training window.
+   - Output state + state probabilities.
 
-Pour chaque régime k :
-	•	\mu_k (moyenne des retours, optionnel / peut être 0)
-	•	\Sigma_k (covariance) avec shrinkage (stabilité indispensable)
+4. **Risk Modeling (Monte-Carlo)**
+   - Calibrate regime-conditional covariance (shrinkage).
+   - Simulate portfolio return distributions for horizons (5d, 20d).
+   - Output VaR/CVaR and stress probabilities.
 
-Simulation multivariée
-	•	Simule des retours à horizon H (5j, 20j) pour le portefeuille, pas action par action isolée.
-	•	Distribution :
-	•	Gaussienne (OK MVP)
-	•	Student-t multivariée (plus réaliste : queues épaisses)
+5. **Allocation**
+   - Convert regime → allocation policy.
+   - Solve constrained optimization (long-only, caps, turnover, costs).
+   - Produce target weights.
 
-Ce que tu stockes (pas les chemins)
-	•	VaR / CVaR (1%, 5%)
-	•	prob(perte > x%)
-	•	prob(drawdown > y%) sur 20j
-	•	quantiles du PnL futur
+6. **Risk Overlay (Daily)**
+   - Vol targeting (scale exposure to match volatility target).
+   - Stress cut (reduce exposure if tail risk exceeds thresholds).
 
-Sorties :
-	•	mc_summary[t, horizon]
+7. **Backtest**
+   - Apply rebalancing schedule, transaction costs, constraints.
+   - Produce performance series and all diagnostics.
 
-⸻
+---
 
-8) Allocation dynamique (portfolio engine)
+## Regime Detection
 
-Tu crées une règle “régime → policy”.
+The regime model outputs:
+- a discrete state: `S_t ∈ {1..K}`
+- state probabilities: `P(S_t = k)`
 
-Exemple de policies (long-only)
-	•	Trend/Calme : risk-on
-allocation type momentum + budget risque plus élevé, poids plus concentrés
-	•	Mean reversion : diversification + rotation
-plus de contraintes, poids plus répartis
-	•	Stress : désendettement / réduction expo
-baisse de l’exposition totale (cash), cap sur les poids, turnover réduit
+Recommended: **HMM with K=3 states**, interpreted as:
+- **State 1 — Calm/Trend**: low vol, positive momentum, moderate correlations
+- **State 2 — Choppy/Mean-Revert**: mixed momentum, mid vol, higher dispersion
+- **State 3 — Stress/Risk-off**: high vol, drawdowns, high correlations
 
-Optimisation (pro et réaliste)
+**Important**: regime detection is trained on multiple years (if available) and tested on the project year out-of-sample.
 
-Tu optimises sous contraintes :
-	•	Somme des poids = 1 (ou ≤1 si cash)
-	•	0 ≤ w_i ≤ w_max
-	•	turnover max (sinon backtest mensonger)
-	•	coûts de transaction (bps) + slippage simple
-	•	target vol (important)
+---
 
-Objectifs possibles :
-	•	min variance (MVP robuste)
-	•	max Sharpe (plus fragile)
-	•	min CVaR (très pro)
+## Risk Modeling (Monte-Carlo)
 
-Sorties :
-	•	weights[t, asset]
-	•	trades[t, asset] (deltas)
-	•	portfolio_exposure[t]
+Monte-Carlo is used to estimate **future risk distributions**, conditional on regime:
+- Build regime-conditional parameters:
+  - mean `μ_k` (optional / can be set to 0 conservatively)
+  - covariance `Σ_k` (with shrinkage for stability)
+- Simulate multi-asset returns at horizons:
+  - **5 days** (tactical risk)
+  - **20 days** (regime horizon)
 
-⸻
+### Stored Outputs (summary only)
+We **do not store paths**. We store summaries:
+- VaR(5%), CVaR(5%)
+- VaR(1%), CVaR(1%)
+- probability of loss worse than X
+- probability of drawdown worse than Y
+- quantiles of portfolio PnL distribution
 
-9) Overlay de risque (la couche “institutionnelle”)
+This is compact, auditable, and directly usable by the overlay.
 
-Même si tu rebalance hebdo, tu peux contrôler le risque tous les jours :
-	•	Vol targeting : scale l’exposition pour coller à une vol cible (ex 10–15% annualisé)
-	•	Stress cut : si prob(drawdown) ou CVaR dépasse un seuil → réduction automatique de l’exposition
-	•	Turnover governor : limite les changements pour éviter de surtrader
+---
 
-C’est ce qui rend ton projet “pro” et pas juste académique.
+## Dynamic Allocation
 
-⸻
+The allocation engine maps `regime → policy`.
 
-10) Backtest : walk-forward + séparation train/test
+Example policies (illustrative):
+- **Calm/Trend**: risk-on posture (higher exposure, more concentration, momentum tilt)
+- **Choppy**: diversify, reduce concentration, constrain turnover
+- **Stress**: reduce exposure (allow cash), tighten caps, minimize tail risk
 
-Objectif : éviter l’auto-illusion.
-	•	Période d’entraînement : plusieurs années (5–10 ans si possible)
-	•	Période de test “projet” : l’année cible (jan→déc) en out-of-sample
-	•	Walk-forward :
-	•	tu recalibres (régimes, cov) sur une fenêtre glissante
-	•	tu trades la fenêtre suivante
+### Optimization (typical constraints)
+- `Σ w_i = 1` (or `≤ 1` if cash is allowed)
+- `0 ≤ w_i ≤ w_max`
+- turnover cap per rebalance
+- transaction costs (bps) + optional slippage
+- optional target volatility constraint
 
-Métriques attendues
-	•	Perf : CAGR, Sharpe, Sortino
-	•	Risque : max drawdown, CVaR, VaR
-	•	Stabilité : turnover, concentration (HHI), sensibilité aux paramètres
-	•	Comparaisons :
-	•	vs Equal Weight
-	•	vs Buy&Hold market proxy
-	•	vs stratégie sans régimes (ablation)
+---
 
-⸻
+## Risk Overlay
 
-11) Stockage (concret, simple, efficace)
+This layer runs daily and enforces a “risk-first” behavior:
 
-Vu que ta DB est minimaliste (cache prix), fais comme ça :
-	•	Parquet / fichiers : prix, retours, features, covariances, weights, résultats backtest
-	•	DB : seulement last_price_date (MVP)
+1. **Vol Targeting**
+   - scale exposure to hit target annualized volatility (e.g., 10–15%)
 
-Ensuite si tu veux “industrialiser” :
-	•	DB pour runs, metrics, allocations, regime_state (audit + comparaison)
+2. **Stress Cut**
+   - if regime-conditional tail risk exceeds thresholds (via MC summaries),
+     reduce exposure automatically
 
-Réponse claire à ta question implicite :
-➡️ Non, tu n’es pas obligé de stocker toutes les features en SQL. En pratique, Parquet est mieux pour des tableaux temporels.
+3. **Turnover Governor**
+   - limits over-trading (crucial for realism)
 
-⸻
+This overlay is what makes the system stable and closer to professional portfolio processes.
 
-12) Livrables finaux (ce qui fait “qualitatif”)
-	1.	Code structuré + reproductible
-	2.	Backtest walk-forward propre
-	3.	Rapport final :
-	•	description méthode
-	•	régimes identifiés + interprétation
-	•	règles d’allocation par régime
-	•	résultats + risques + ablations
-	•	limites + améliorations
+---
 
-⸻
+## Backtesting Protocol
 
-13) Roadmap (ordre le plus intelligent)
-	1.	Ingestion + cache DB last_date
-	2.	Features + affichages diagnostics
-	3.	HMM 3 régimes + validation “ça fait sens”
-	4.	Allocation simple (min-variance + contraintes) + backtest baseline
-	5.	Overlay vol targeting
-	6.	Monte-Carlo conditionnel + stress cut
-	7.	Walk-forward complet + rapport
+To avoid fooling ourselves:
 
-⸻
+- Train regime/risk parameters on a rolling historical window (multi-year if possible).
+- Evaluate on the **project year** out-of-sample (01/01 → 31/12).
+- Use **walk-forward**:
+  - recalibrate → trade next period → repeat
 
-Si tu me dis quelle source de données tu utilises (yfinance ? autre ?) et si ton univers est US ou EU, je te propose une structure de fichiers exacte (scripts + noms + signatures des fonctions) + un “pipeline runner” (un seul main.py qui exécute tout dans le bon ordre).
+### Baselines / Ablations
+- Equal-weight portfolio
+- Minimum variance without regimes
+- Strategy without overlay
+- Strategy without Monte-Carlo summaries
+
+---
+
+## Storage Strategy
+
+### Minimal SQL DB (current)
+Used only for:
+- `ticker → last_available_date`
+
+### File Storage (recommended)
+Store heavy objects in files:
+- prices, returns
+- features
+- covariance matrices
+- regime outputs
+- weights, trades
+- backtest results
+
+Parquet is ideal; CSV is acceptable for MVP.
+
+---
+
+## Outputs
+
+- `regimes`: state + probabilities
+- `weights`: daily portfolio weights
+- `trades`: rebalancing deltas + turnover
+- `risk`: VaR/CVaR and stress probabilities
+- `performance`: equity curve, drawdowns
+- `report`: plots and summary tables
+
+---
+
+## Project Structure
+
+Typical structure (may vary):
