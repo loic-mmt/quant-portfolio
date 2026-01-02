@@ -37,6 +37,7 @@ ds.write_dataset(
     existing_data_behavior="overwrite_or_ignore",  # pratique en dev
 )
 
+
 # --- Read dataset (Hive partition discovery adds asset/year as virtual columns) ---
 dataset = ds.dataset(str(out_dir), format="parquet", partitioning="hive")
 print("Discovered schema:", dataset.schema)
