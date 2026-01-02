@@ -29,7 +29,15 @@ L’objectif n’est pas de “prédire le futur” au sens naïf. L’objectif 
     - [Minimal SQL DB](#minimal-sql-db)
     - [File Storage](#file-storage)
   - [Outputs](#outputs)
-  - [Project Structure](#project-structure)
+  - [Project Structure (may vary):](#project-structure-may-vary)
+  - [How to Run](#how-to-run)
+  - [Evaluation Metrics](#evaluation-metrics)
+    - [Performance](#performance)
+    - [Risk](#risk)
+    - [Practicality](#practicality)
+  - [Limitations](#limitations)
+  - [Roadmap](#roadmap)
+  - [License / Disclaimer](#license--disclaimer)
 
 ---
 
@@ -264,5 +272,82 @@ Parquet is ideal.
 
 ---
 
-## Project Structure
-...
+## Project Structure (may vary):
+src/
+ingest/
+features/
+regimes/
+risk_mc/
+optimize/
+backtest/
+report/
+db/
+data/
+artifacts/
+
+
+- **Python** orchestrates and owns the research pipeline.
+- **C++** accelerates compute-heavy blocks (MC / optimization), called from Python.
+- **SQL** acts as a lightweight cache for price freshness.
+
+---
+
+## How to Run
+
+High-level steps:
+1. Configure tickers and parameters in config files.
+2. Run ingestion (incremental).
+3. Build features.
+4. Fit regimes (walk-forward).
+5. Run backtest.
+6. Generate report.
+
+(Exact CLI commands depend on implementation.)
+
+---
+
+## Evaluation Metrics
+
+### Performance
+- CAGR
+- Sharpe / Sortino
+- hit rate (optional)
+
+### Risk
+- Max Drawdown
+- VaR / CVaR (1%, 5%)
+- downside deviation
+- tail-risk frequency
+
+### Practicality
+- turnover
+- concentration (HHI)
+- regime attribution (performance per regime)
+
+---
+
+## Limitations
+
+- Without options, hedging is limited; stress regime response is mainly **de-risking / cash**.
+- Regime models can lag; overly frequent state switching is a risk (mitigated by probabilities + smoothing).
+- Results depend on realistic costs and turnover constraints.
+- If the universe changes over time, survivorship bias may affect the backtest.
+
+---
+
+## Roadmap
+
+1. Ingest + SQL cache
+2. Features + diagnostics
+3. HMM regimes (K=3) + interpretation
+4. Baseline allocation (min-variance) + backtest
+5. Vol targeting overlay
+6. Regime-conditional Monte-Carlo summaries
+7. Full walk-forward + ablations + final report
+8. C++ acceleration for MC/optimization if needed
+
+---
+
+## License / Disclaimer
+
+This project is for research and educational purposes. It is not financial advice.
