@@ -76,18 +76,62 @@ def dist_ma(df, batch: str = "all"):
         raise KeyError("Please choose between: 20 jours, 3 mois, 1 an, all")
 
     prices = df["adj_close"] if "adj_close" in df.columns else df.iloc[:, 0]
+    MA20 = prices.rolling(20).mean()
     MA50 = prices.rolling(50).mean()
+    MA60 = prices.rolling(60).mean()
     MA200 = prices.rolling(200).mean()
     
     out = pd.DataFrame(index=df.index)
+    outMA = pd.DataFrame(index=df.index)
+    outMA["ma20"] = MA20
+    outMA["ma50"] = MA50
+    outMA["ma60"] = MA60
+    outMA["ma200"] = MA200
+
     out["dist_ma_50"] = (prices/MA50)-1
     out["dist_ma_200"] = (prices/MA200)-1
 
     if batch == "all":
-        return out
+        return out, outMA
     window = batch_params[batch]
-    return out[[f"dist_ma{window}"]]
- 
+    return out[[f"dist_ma{window}"]], outMA
+
+
+
+def volatility(df):
+    if df is None or df.empty:
+        return pd.DataFrame(index=df.index if df is not None else None)
+
+    prices = df["adj_close"] if "adj_close" in df.columns else df.iloc[:, 0]
+    vol_20 = prices.rolling(20).std()
+    vol_60 = prices.rolling(60).std()
+    emwa_vol = prices.ewm(alpha = 0.94).std()
+    vol_of_vol_20 = vol_20.rolling(20).std()
+    
+    out = pd.DataFrame(index=df.index)
+    out["vol_20"] = vol_20
+    out["vol_60"] = vol_60
+    out["emwa_vol"] = emwa_vol
+    out["vol_of_vol_20"] = vol_of_vol_20
+
+    return out
+
+
+def drawdown(df):
+    if df is None or df.empty:
+        return pd.DataFrame(index=df.index if df is not None else None)
+
+    prices = df["adj_close"] if "adj_close" in df.columns else df.iloc[:, 0]
+    dd_60 = prices.rolling(20).min()
+    current_dd = 1 - prices / max(prices)
+    dd_252 = prices.rolling(20).min()
+    
+    out = pd.DataFrame(index=df.index)
+    out["dd_60"] = dd_60
+    out["current_dd"] = current_dd
+    out["dd_252"] = dd_252
+
+    return out
 
 
 def upsert_features(df: pd.DataFrame) -> int:
