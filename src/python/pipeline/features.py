@@ -14,6 +14,8 @@ if CLEAN_PARQUET and out_dir.exists():
     shutil.rmtree(out_dir)
 out_dir.mkdir(parents=True, exist_ok=True)
 
+# ==================== Market Regimes ====================
+# ========================================================
 
 def compute_returns(df):
     if df is None or df.empty:
@@ -150,6 +152,55 @@ def asymetry(df):
     out["kurt_60"] = kurt_60
 
     return out
+
+
+# ==================== Cross-Section =====================
+# ========================================================
+
+
+def mean_corr(df, tickers):
+    if df is None or df.empty:
+        return pd.DataFrame(index=df.index if df is not None else None)
+    for i in tickers:
+        returns = compute_returns(df)
+        out_returns = pd.DataFrame(index=df.index)
+        out_returns[f"returns{i}"] = returns
+        return out_returns
+
+    corr_matrix = out_returns.corr(method='pearson')
+    corr_matrix_diag = np.fill_diagonal(corr_matrix.values, np.nan)
+
+    avg_corr_60 = corr_matrix_diag.rolling(60).mean()
+    avg_corr_20 = corr_matrix_diag.rolling(20).mean()
+    
+    out = pd.DataFrame(index=df.index)
+    out["avg_corr_60"] = avg_corr_60
+    out["avg_corr_20"] = avg_corr_20
+
+    return  out
+
+
+def dispersion(df, tickers):
+    if df is None or df.empty:
+        return pd.DataFrame(index=df.index if df is not None else None)
+    for i in tickers:
+        returns = compute_returns(df)
+        out_returns = pd.DataFrame(index=df.index)
+        out_returns[f"returns{i}"] = returns
+        return out_returns
+
+    corr_matrix = out_returns.corr(method='pearson')
+    corr_matrix_diag = np.fill_diagonal(corr_matrix.values, np.nan)
+
+    avg_corr_60 = corr_matrix_diag.rolling(60).mean()
+    avg_corr_20 = corr_matrix_diag.rolling(20).mean()
+    
+    out = pd.DataFrame(index=df.index)
+    out["avg_corr_60"] = avg_corr_60
+    out["avg_corr_20"] = avg_corr_20
+
+    return  out
+
 
 
 
