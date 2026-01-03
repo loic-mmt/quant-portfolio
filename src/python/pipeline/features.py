@@ -189,19 +189,61 @@ def dispersion(df, tickers):
         out_returns[f"returns{i}"] = returns
         return out_returns
 
-    corr_matrix = out_returns.corr(method='pearson')
-    corr_matrix_diag = np.fill_diagonal(corr_matrix.values, np.nan)
+    row, cols = out_returns.shape
+    for t in row:
+        for i in cols:
+            dispersion_t = out_returns[t].std()
+            out_disp = pd.DataFrame(index=df.index)
+            out_disp[f"disp{i}"] = dispersion_t
+        return out_disp
 
-    avg_corr_60 = corr_matrix_diag.rolling(60).mean()
-    avg_corr_20 = corr_matrix_diag.rolling(20).mean()
+    disp_20 = out_disp.rolling(20).mean()
+    disp_60 = out_disp.rolling(60).mean()
     
     out = pd.DataFrame(index=df.index)
-    out["avg_corr_60"] = avg_corr_60
-    out["avg_corr_20"] = avg_corr_20
+    out["disp_20"] = disp_20
+    out["disp_60"] = disp_60
 
     return  out
 
 
+def breadth(df, tickers):
+    if df is None or df.empty:
+        return pd.DataFrame(index=df.index if df is not None else None)
+
+    for i in tickers:
+        returns = compute_returns(df)
+        dist, MA = dist_ma(df)
+        for r in returns:
+            breadth_up = pd.DataFrame(index=df.index)
+            if r > 0:
+                breadth_up[f"pos_returns{r}"] = True
+            else : breadth_up[f"pos_returns{r}"] = False
+
+            if r > MA[1]:
+                breadth_up[f"pos_returns_ma20{r}"] = True
+            else : breadth_up[f"pos_returns_ma20{r}"] = False
+
+            if r > MA[2]:
+                breadth_up[f"pos_returns_ma50{r}"] = True
+            else : breadth_up[f"pos_returns_ma50{r}"] = False
+
+            pct_breadth_up = breadth_up[f"pos_returns{r}"].where(True) / breadth_up[f"pos_returns{r}"].where(False)
+            pct_breadth_up_ma20 = breadth_up[f"pos_returns_ma20{r}"].where(True) / breadth_up[f"pos_returns_ma20{r}"].where(False)
+            pct_breadth_up_ma50 = breadth_up[f"pos_returns_ma50{r}"].where(True) / breadth_up[f"pos_returns_ma50{r}"].where(False)
+            return pct_breadth_up
+        breadth_up_20 = pct_breadth_up.rolling(20).mean()
+        breadth_up_50 = pct_breadth_up.rolling(50).mean()
+        breadth_up_ma20 = pct_breadth_up_ma20.rolling(20).mean()
+        breadth_up_ma50 = pct_breadth_up_ma50.rolling(50).mean()
+
+        out = pd.DataFrame(index=df.index)
+        out["breadth_up_20"] = breadth_up_20
+        out["breadth_up_50"] = breadth_up_50
+        out["breadth_up_ma20"] = breadth_up_ma20
+        out["breadth_up_ma50"] = breadth_up_ma50
+        return  out
+    return  out
 
 
 def upsert_features(df: pd.DataFrame) -> int:
