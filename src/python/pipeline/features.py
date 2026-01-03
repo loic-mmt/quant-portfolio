@@ -5,6 +5,7 @@ from sklearn import linear_model
 import pyarrow as pa
 import pyarrow.dataset as ds
 import shutil
+from scipy.stats import skew, kurtosis
 
 
 out_dir = Path("data/parquet/features")
@@ -132,6 +133,23 @@ def drawdown(df):
     out["dd_252"] = dd_252
 
     return out
+
+
+def asymetry(df):
+    if df is None or df.empty:
+        return pd.DataFrame(index=df.index if df is not None else None)
+
+    prices = df["adj_close"] if "adj_close" in df.columns else df.iloc[:, 0]
+
+    skew_60 = (compute_returns(prices)).rolling(60).skew()
+    kurt_60 = (compute_returns(prices)).rolling(60).kurt()
+    
+    out = pd.DataFrame(index=df.index)
+    out["skew_60"] = skew_60
+    out["kurt_60"] = kurt_60
+
+    return out
+
 
 
 def upsert_features(df: pd.DataFrame) -> int:
