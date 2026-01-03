@@ -268,12 +268,68 @@ def build_market_index(df: pd.DataFrame, tickers: list[str] | None = None):
 
 
 def regime_features(df: pd.DataFrame, tickers: list[str] | None = None):
-    # TODO: construire l'index marché via build_market_index.
-    # TODO: calculer les features market regime sur cet index (mom, vol, ewma, dd, skew, etc.).
-    # TODO: calculer les features cross-section (avg_corr, disp, breadth) sur l'univers complet.
-    # TODO: fusionner toutes les features par date en un seul DataFrame.
-    # TODO: renvoyer le DataFrame "regime_features" prêt pour le modèle de régimes.
-    pass
+    if df is None or df.empty:
+        return pd.DataFrame(index=df.index if df is not None else None)
+
+    mkt = build_market_index(df, tickers)
+
+    mom = momentum(mkt).rename(     # préfixes mkt_ pour éviter les collisions.
+        columns={
+            "mom_20": "mom_mkt_20",
+            "mom_60": "mom_mkt_60",
+            "mom_252": "mom_mkt_252",
+        }
+    )
+    slope = trend_slope_60(mkt).rename("trend_slope_60")
+    dist, _ = dist_ma(mkt)
+    dist = dist.rename(
+        columns={
+            "dist_ma_50": "dist_mkt_ma_50",
+            "dist_ma_200": "dist_mkt_ma_200",
+        }
+    )
+    vol = volatility(mkt).rename(
+        columns={
+            "vol_20": "vol_mkt_20",
+            "vol_60": "vol_mkt_60",
+            "emwa_vol": "ewma_vol_mkt",
+            "vol_of_vol_20": "vol_of_vol_20",
+        }
+    )
+    dd = drawdown(mkt).rename(
+        columns={
+            "dd_60": "dd_mkt_60",
+            "mdd_252": "mdd_mkt_252",
+        }
+    )
+    asym = asymetry(mkt).rename(
+        columns={
+            "skew_60": "skew_mkt_60",
+            "kurt_60": "kurt_mkt_60",
+        }
+    )
+
+    avg_corr = mean_corr(df, tickers)
+    disp = dispersion(df, tickers)
+    br = breadth(df, tickers)
+    d_avg_corr = correlation_shock(df, tickers).rename("d_avg_corr")
+
+    out = pd.concat(
+        [
+            mom,
+            slope,
+            dist,
+            vol,
+            dd,
+            asym,
+            avg_corr,
+            disp,
+            br,
+            d_avg_corr,
+        ],
+        axis=1,
+    ).sort_index()
+    return out
 
 
 # ==================== Per-Asset Features ================
