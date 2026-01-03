@@ -17,7 +17,7 @@ out_dir.mkdir(parents=True, exist_ok=True)
 # ==================== Market Regimes ====================
 # ========================================================
 
-def compute_returns(df):
+def compute_returns(df):  # à modifier
     if df is None or df.empty:
         return pd.Series(dtype="float64")
     prices = df["adj_close"] if "adj_close" in df.columns else df.iloc[:, 0]
@@ -249,6 +249,60 @@ def correlation_shock(df: pd.DataFrame, tickers: list[str] | None = None):
         return pd.Series(dtype="float64")
     correlation = mean_corr(df, tickers)
     return correlation["avg_corr_20"] - correlation["avg_corr_60"]
+
+
+# ==================== Market Proxy ======================
+# ========================================================
+
+
+def build_market_index(df: pd.DataFrame, tickers: list[str] | None = None):
+    prices, _ = _pivot_prices_returns(df, tickers)
+    daily_mean_prices = prices.mean(axis=1, skipna=True)
+    out = pd.DataFrame(index=prices.index)
+    out["adj_close"] = daily_mean_prices
+    return out
+
+
+# ==================== Regime Features ===================
+# ========================================================
+
+
+def regime_features(df: pd.DataFrame, tickers: list[str] | None = None):
+    # TODO: construire l'index marché via build_market_index.
+    # TODO: calculer les features market regime sur cet index (mom, vol, ewma, dd, skew, etc.).
+    # TODO: calculer les features cross-section (avg_corr, disp, breadth) sur l'univers complet.
+    # TODO: fusionner toutes les features par date en un seul DataFrame.
+    # TODO: renvoyer le DataFrame "regime_features" prêt pour le modèle de régimes.
+    pass
+
+
+# ==================== Per-Asset Features ================
+# ========================================================
+
+
+def asset_features(df: pd.DataFrame, tickers: list[str] | None = None):
+    # TODO: utiliser groupby(ticker) pour calculer les features par action.
+    # TODO: inclure vol_i_20/60, ewma_vol_i, mom_i_20/60/252, dd_i_60/252.
+    # TODO: calculer downside_vol_i_60 (std des retours négatifs).
+    # TODO: calculer beta_i_60 et idio_vol_i_60 vs index marché.
+    # TODO: ajouter adv_20 et dollar_volume_20 si volume dispo.
+    # TODO: retourner un DataFrame indexé par date/ticker avec les features.
+    pass
+
+
+def beta_idio_features(df: pd.DataFrame, mkt_returns: pd.Series, window: int = 60):
+    # TODO: calculer beta rolling par ticker via cov(r_i, r_mkt)/var(r_mkt).
+    # TODO: calculer idio_vol rolling via std des résidus (r_i - beta*r_mkt).
+    # TODO: retourner un DataFrame avec colonnes beta_{window}, idio_vol_{window}.
+    pass
+
+
+def liquidity_features(df: pd.DataFrame, window: int = 20):
+    # TODO: vérifier la présence de volume.
+    # TODO: calculer adv_{window} (moyenne du volume).
+    # TODO: calculer dollar_volume_{window} (price * volume en moyenne).
+    # TODO: retourner un DataFrame avec ces colonnes.
+    pass
 
 
 # ======================= Parquet ========================
