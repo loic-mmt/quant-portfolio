@@ -186,17 +186,21 @@ def _pivot_prices_returns(df: pd.DataFrame, tickers: list[str] | None = None):
 def _avg_corr_series(returns: pd.DataFrame, window: int) -> pd.Series:
     if returns is None or returns.empty:
         return pd.Series(dtype="float64")
+    
     values = returns.values
     out = np.full(len(returns), np.nan, dtype="float64")
+
     for idx in range(window - 1, len(returns)):
         window_data = values[idx - window + 1 : idx + 1]
         valid_cols = ~np.all(np.isnan(window_data), axis=0)
         window_data = window_data[:, valid_cols]
+        
         if window_data.shape[1] < 2:
             continue
         corr = pd.DataFrame(window_data).corr().to_numpy()
         np.fill_diagonal(corr, np.nan)
         out[idx] = np.nanmean(corr)
+
     return pd.Series(out, index=returns.index)
 
 
