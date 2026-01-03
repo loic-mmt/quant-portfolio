@@ -246,6 +246,14 @@ def breadth(df, tickers):
     return  out
 
 
+def correlation_shock(df):
+    if df is None or df.empty:
+        return pd.DataFrame(index=df.index if df is not None else None)
+    correlation = mean_corr(df)
+    d_avg_corr = correlation['avg_corr_20'] - correlation['avg_corr_60']
+    return d_avg_corr
+
+
 def upsert_features(df: pd.DataFrame) -> int:
     """Append the new batch to a Hive-partitioned Parquet dataset.
 
