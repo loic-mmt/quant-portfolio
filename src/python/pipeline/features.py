@@ -158,101 +158,97 @@ def asymetry(df):
 # ========================================================
 
 
-def mean_corr(df, tickers):
+def _pivot_prices_returns(df: pd.DataFrame, tickers: list[str] | None = None):
+    if df is None or df.empty:
+        return (
+            pd.DataFrame(index=df.index if df is not None else None),
+            pd.DataFrame(index=df.index if df is not None else None),
+        )
+    required = {"date", "ticker", "adj_close"}
+    if not required.issubset(df.columns):
+        missing = ", ".join(sorted(required - set(df.columns)))
+        raise KeyError(f"Missing required columns: {missing}")
+
+    data = df.copy()
+    if tickers is not None:
+        data = data[data["ticker"].isin(tickers)]
+
+    data["date"] = pd.to_datetime(data["date"], errors="coerce")
+    data = data.dropna(subset=["date"])
+    prices = (
+        data.pivot_table(index="date", columns="ticker", values="adj_close", aggfunc="last")
+        .sort_index()
+    )
+    returns = prices.pct_change()
+    return prices, returns
+
+
+def _avg_corr_series(returns: pd.DataFrame, window: int) -> pd.Series:
+    if returns is None or returns.empty:
+        return pd.Series(dtype="float64")
+    values = returns.values
+    out = np.full(len(returns), np.nan, dtype="float64")
+    for idx in range(window - 1, len(returns)):
+        window_data = values[idx - window + 1 : idx + 1]
+        valid_cols = ~np.all(np.isnan(window_data), axis=0)
+        window_data = window_data[:, valid_cols]
+        if window_data.shape[1] < 2:
+            continue
+        corr = pd.DataFrame(window_data).corr().to_numpy()
+        np.fill_diagonal(corr, np.nan)
+        out[idx] = np.nanmean(corr)
+    return pd.Series(out, index=returns.index)
+
+
+def mean_corr(df: pd.DataFrame, tickers: list[str] | None = None):
     if df is None or df.empty:
         return pd.DataFrame(index=df.index if df is not None else None)
-    for i in tickers:
-        returns = compute_returns(df)
-        out_returns = pd.DataFrame(index=df.index)
-        out_returns[f"returns{i}"] = returns
-        return out_returns
+    _, returns = _pivot_prices_returns(df, tickers)
 
-    corr_matrix = out_returns.corr(method='pearson')
-    corr_matrix_diag = np.fill_diagonal(corr_matrix.values, np.nan)
-
-    avg_corr_60 = corr_matrix_diag.rolling(60).mean()
-    avg_corr_20 = corr_matrix_diag.rolling(20).mean()
-    
-    out = pd.DataFrame(index=df.index)
-    out["avg_corr_60"] = avg_corr_60
-    out["avg_corr_20"] = avg_corr_20
-
-    return  out
+    out = pd.DataFrame(index=returns.index)
+    out["avg_corr_60"] = _avg_corr_series(returns, 60)
+    out["avg_corr_20"] = _avg_corr_series(returns, 20)
+    return out
 
 
-def dispersion(df, tickers):
+def dispersion(df: pd.DataFrame, tickers: list[str] | None = None):
     if df is None or df.empty:
         return pd.DataFrame(index=df.index if df is not None else None)
-    for i in tickers:
-        returns = compute_returns(df)
-        out_returns = pd.DataFrame(index=df.index)
-        out_returns[f"returns{i}"] = returns
-        return out_returns
+    _, returns = _pivot_prices_returns(df, tickers)
 
-    row, cols = out_returns.shape
-    for t in row:
-        for i in cols:
-            dispersion_t = out_returns[t].std()
-            out_disp = pd.DataFrame(index=df.index)
-            out_disp[f"disp{i}"] = dispersion_t
-        return out_disp
-
-    disp_20 = out_disp.rolling(20).mean()
-    disp_60 = out_disp.rolling(60).mean()
-    
-    out = pd.DataFrame(index=df.index)
-    out["disp_20"] = disp_20
-    out["disp_60"] = disp_60
-
-    return  out
+    daily_disp = returns.std(axis=1, skipna=True)
+    out = pd.DataFrame(index=returns.index)
+    out["disp_20"] = daily_disp.rolling(20).mean()
+    out["disp_60"] = daily_disp.rolling(60).mean()
+    return out
 
 
-def breadth(df, tickers):
+def breadth(df: pd.DataFrame, tickers: list[str] | None = None):
     if df is None or df.empty:
         return pd.DataFrame(index=df.index if df is not None else None)
+    prices, returns = _pivot_prices_returns(df, tickers)
 
-    for i in tickers:
-        returns = compute_returns(df)
-        dist, MA = dist_ma(df)
-        for r in returns:
-            breadth_up = pd.DataFrame(index=df.index)
-            if r > 0:
-                breadth_up[f"pos_returns{r}"] = True
-            else : breadth_up[f"pos_returns{r}"] = False
+    breadth_up = (returns > 0).mean(axis=1, skipna=True)
+    breadth_up_20 = breadth_up.rolling(20).mean()
+    ma50 = prices.rolling(50).mean()
+    breadth_ma50 = (prices > ma50).mean(axis=1, skipna=True)
 
-            if r > MA[1]:
-                breadth_up[f"pos_returns_ma20{r}"] = True
-            else : breadth_up[f"pos_returns_ma20{r}"] = False
-
-            if r > MA[2]:
-                breadth_up[f"pos_returns_ma50{r}"] = True
-            else : breadth_up[f"pos_returns_ma50{r}"] = False
-
-            pct_breadth_up = breadth_up[f"pos_returns{r}"].where(True) / breadth_up[f"pos_returns{r}"].where(False)
-            pct_breadth_up_ma20 = breadth_up[f"pos_returns_ma20{r}"].where(True) / breadth_up[f"pos_returns_ma20{r}"].where(False)
-            pct_breadth_up_ma50 = breadth_up[f"pos_returns_ma50{r}"].where(True) / breadth_up[f"pos_returns_ma50{r}"].where(False)
-            return pct_breadth_up
-        breadth_up_20 = pct_breadth_up.rolling(20).mean()
-        breadth_up_50 = pct_breadth_up.rolling(50).mean()
-        breadth_up_ma20 = pct_breadth_up_ma20.rolling(20).mean()
-        breadth_up_ma50 = pct_breadth_up_ma50.rolling(50).mean()
-
-        out = pd.DataFrame(index=df.index)
-        out["breadth_up_20"] = breadth_up_20
-        out["breadth_up_50"] = breadth_up_50
-        out["breadth_up_ma20"] = breadth_up_ma20
-        out["breadth_up_ma50"] = breadth_up_ma50
-        return  out
-    return  out
+    out = pd.DataFrame(index=returns.index)
+    out["breadth_up"] = breadth_up
+    out["breadth_up_20"] = breadth_up_20
+    out["breadth_ma50"] = breadth_ma50
+    return out
 
 
-def correlation_shock(df):
+def correlation_shock(df: pd.DataFrame, tickers: list[str] | None = None):
     if df is None or df.empty:
-        return pd.DataFrame(index=df.index if df is not None else None)
-    correlation = mean_corr(df)
-    d_avg_corr = correlation['avg_corr_20'] - correlation['avg_corr_60']
-    return d_avg_corr
+        return pd.Series(dtype="float64")
+    correlation = mean_corr(df, tickers)
+    return correlation["avg_corr_20"] - correlation["avg_corr_60"]
 
+
+# ======================= Parquet ========================
+# ========================================================
 
 def upsert_features(df: pd.DataFrame) -> int:
     """Append the new batch to a Hive-partitioned Parquet dataset.
