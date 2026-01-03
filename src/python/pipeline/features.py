@@ -5,6 +5,8 @@ from sklearn import linear_model
 import pyarrow as pa
 import pyarrow.dataset as ds
 import shutil
+
+
 out_dir = Path("data/parquet/features")
 CLEAN_PARQUET = False  # set True only if you want to reset the dataset
 if CLEAN_PARQUET and out_dir.exists():
@@ -60,6 +62,32 @@ def trend_slope_60(df):
         return lr.coef_[0]
 
     return log_prices.rolling(window).apply(slope_from_window, raw=True)
+
+
+def dist_ma(df, batch: str = "all"):
+    batch_params = {
+        "50 jours": 50,
+        "200 jours": 200,
+        "all": "all",
+    }
+    if df is None or df.empty:
+        return pd.DataFrame(index=df.index if df is not None else None)
+    if batch not in batch_params:
+        raise KeyError("Please choose between: 20 jours, 3 mois, 1 an, all")
+
+    prices = df["adj_close"] if "adj_close" in df.columns else df.iloc[:, 0]
+    MA50 = prices.rolling(50).mean()
+    MA200 = prices.rolling(200).mean()
+    
+    out = pd.DataFrame(index=df.index)
+    out["dist_ma_50"] = (prices/MA50)-1
+    out["dist_ma_200"] = (prices/MA200)-1
+
+    if batch == "all":
+        return out
+    window = batch_params[batch]
+    return out[[f"dist_ma{window}"]]
+ 
 
 
 def upsert_features(df: pd.DataFrame) -> int:
