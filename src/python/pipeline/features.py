@@ -74,7 +74,7 @@ def dist_ma(df, batch: str = "all"):
     if df is None or df.empty:
         return pd.DataFrame(index=df.index if df is not None else None)
     if batch not in batch_params:
-        raise KeyError("Please choose between: 20 jours, 3 mois, 1 an, all")
+        raise KeyError("Please choose between: 50 jours, 200 jours, all")
 
     prices = df["adj_close"] if "adj_close" in df.columns else df.iloc[:, 0]
     MA20 = prices.rolling(20).mean()
@@ -95,7 +95,7 @@ def dist_ma(df, batch: str = "all"):
     if batch == "all":
         return out, outMA
     window = batch_params[batch]
-    return out[[f"dist_ma{window}"]], outMA
+    return out[[f"dist_ma_{window}"]], outMA
 
 
 
@@ -103,10 +103,10 @@ def volatility(df):
     if df is None or df.empty:
         return pd.DataFrame(index=df.index if df is not None else None)
 
-    prices = df["adj_close"] if "adj_close" in df.columns else df.iloc[:, 0]
-    vol_20 = prices.rolling(20).std()
-    vol_60 = prices.rolling(60).std()
-    emwa_vol = prices.ewm(alpha = 0.94).std()
+    returns = compute_returns(df)
+    vol_20 = returns.rolling(20).std()
+    vol_60 = returns.rolling(60).std()
+    emwa_vol = returns.ewm(alpha=0.06).std()
     vol_of_vol_20 = vol_20.rolling(20).std()
     
     out = pd.DataFrame(index=df.index)
@@ -123,14 +123,15 @@ def drawdown(df):
         return pd.DataFrame(index=df.index if df is not None else None)
 
     prices = df["adj_close"] if "adj_close" in df.columns else df.iloc[:, 0]
-    dd_60 = prices.rolling(20).min()
-    current_dd = 1 - prices / max(prices)
-    dd_252 = prices.rolling(20).min()
+    roll_max_60 = prices.rolling(60).max()
+    dd_60 = 1 - prices / roll_max_60
+    roll_max_252 = prices.rolling(252).max()
+    dd_252 = 1 - prices / roll_max_252
+    mdd_252 = dd_252.rolling(252).max()
     
     out = pd.DataFrame(index=df.index)
     out["dd_60"] = dd_60
-    out["current_dd"] = current_dd
-    out["dd_252"] = dd_252
+    out["mdd_252"] = mdd_252
 
     return out
 
@@ -139,10 +140,10 @@ def asymetry(df):
     if df is None or df.empty:
         return pd.DataFrame(index=df.index if df is not None else None)
 
-    prices = df["adj_close"] if "adj_close" in df.columns else df.iloc[:, 0]
+    returns = compute_returns(df)
 
-    skew_60 = (compute_returns(prices)).rolling(60).skew()
-    kurt_60 = (compute_returns(prices)).rolling(60).kurt()
+    skew_60 = returns.rolling(60).skew()
+    kurt_60 = returns.rolling(60).kurt()
     
     out = pd.DataFrame(index=df.index)
     out["skew_60"] = skew_60
