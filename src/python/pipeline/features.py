@@ -358,6 +358,7 @@ def asset_features(df: pd.DataFrame, tickers: list[str] | None = None):
     out_list = []
     for ticker, g in data.groupby("ticker", sort=False):
         g = g.sort_values("date")
+        g = g.set_index("date")
 
         mom = momentum(g).rename(
             columns={
@@ -391,12 +392,13 @@ def asset_features(df: pd.DataFrame, tickers: list[str] | None = None):
                 "idio_vol_60": "idio_vol_i_60",
             }
         )
-        liq = liquidity_features(g, window=20).rename(
-            columns={
-                "adv_20": "adv_i_20",
-                "dollar_volume_20": "dollar_volume_i_20",
-            }
-        )
+        if "volume" in g.columns:
+            adv = g["volume"].rolling(20).mean().rename("adv_i_20")
+            dollar_volume = (g["adj_close"] * g["volume"]).rolling(20).mean()
+            dollar_volume = dollar_volume.rename("dollar_volume_i_20")
+            liq = pd.concat([adv, dollar_volume], axis=1)
+        else:
+            liq = pd.DataFrame(index=g.index)
 
         feat = pd.concat(
             [mom, vol, dd, downside_vol, beta_idio, liq],
