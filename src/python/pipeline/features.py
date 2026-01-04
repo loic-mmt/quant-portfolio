@@ -21,7 +21,7 @@ def compute_returns(df):  # à modifier
     if df is None or df.empty:
         return pd.Series(dtype="float64")
     prices = df["adj_close"] if "adj_close" in df.columns else df.iloc[:, 0]
-    return prices.pct_change()
+    return np.log(prices / prices.shift(1))
 
 
 
