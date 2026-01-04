@@ -369,11 +369,33 @@ def beta_idio_features(df: pd.DataFrame, mkt_returns: pd.Series, window: int = 6
 
 
 def liquidity_features(df: pd.DataFrame, window: int = 20):
-    # TODO: vérifier la présence de volume.
-    # TODO: calculer adv_{window} (moyenne du volume).
-    # TODO: calculer dollar_volume_{window} (price * volume en moyenne).
-    # TODO: retourner un DataFrame avec ces colonnes.
-    pass
+    if df is None or df.empty:
+        return pd.DataFrame(index=df.index if df is not None else None)
+
+    required = {"volume", "ticker", "adj_close"}
+    if not required.issubset(df.columns):
+        missing = ", ".join(sorted(required - set(df.columns)))
+        raise KeyError(f"Missing required columns: {missing}")
+
+    data = df.copy()
+    if "date" in data.columns:
+        data["date"] = pd.to_datetime(data["date"], errors="coerce")
+        data = data.dropna(subset=["date"])
+        data = data.sort_values(["ticker", "date"])
+
+    adv = (
+        data.groupby("ticker", group_keys=False)["volume"]
+        .rolling(window)
+        .mean()
+    )
+    dollar_volume = (
+        data["adj_close"] * data["volume"]
+    ).groupby(data["ticker"], group_keys=False).rolling(window).mean()
+
+    out = pd.DataFrame(index=data.index)
+    out[f"adv_{window}"] = adv
+    out[f"dollar_volume_{window}"] = dollar_volume
+    return out
 
 
 # ======================= Parquet ========================
