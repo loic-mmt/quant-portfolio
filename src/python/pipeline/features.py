@@ -5,7 +5,7 @@ from sklearn import linear_model
 import pyarrow as pa
 import pyarrow.dataset as ds
 import shutil
-from scipy.stats import skew, kurtosis
+from scipy.stats import skew, kurtosis, variation, Covariance
 
 
 out_dir = Path("data/parquet/features")
@@ -347,10 +347,25 @@ def asset_features(df: pd.DataFrame, tickers: list[str] | None = None):
 
 
 def beta_idio_features(df: pd.DataFrame, mkt_returns: pd.Series, window: int = 60):
-    # TODO: calculer beta rolling par ticker via cov(r_i, r_mkt)/var(r_mkt).
-    # TODO: calculer idio_vol rolling via std des résidus (r_i - beta*r_mkt).
-    # TODO: retourner un DataFrame avec colonnes beta_{window}, idio_vol_{window}.
-    pass
+    if df is None or df.empty or mkt_returns is None or mkt_returns.empty:
+        return pd.DataFrame(index=df.index if df is not None else None)
+
+    returns = compute_returns(df).rename("asset_ret")
+    aligned = pd.concat([returns, mkt_returns.rename("mkt_ret")], axis=1).dropna()
+    if aligned.empty:
+        return pd.DataFrame(index=returns.index)
+
+    cov = aligned["asset_ret"].rolling(window).cov(aligned["mkt_ret"])
+    var = aligned["mkt_ret"].rolling(window).var()
+    beta = cov / var
+
+    resid = aligned["asset_ret"] - beta * aligned["mkt_ret"]
+    idio_vol = resid.rolling(window).std()
+
+    out = pd.DataFrame(index=aligned.index)
+    out[f"beta_{window}"] = beta
+    out[f"idio_vol_{window}"] = idio_vol
+    return out
 
 
 def liquidity_features(df: pd.DataFrame, window: int = 20):
