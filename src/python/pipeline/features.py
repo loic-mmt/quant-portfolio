@@ -337,13 +337,77 @@ def regime_features(df: pd.DataFrame, tickers: list[str] | None = None):
 
 
 def asset_features(df: pd.DataFrame, tickers: list[str] | None = None):
-    # TODO: utiliser groupby(ticker) pour calculer les features par action.
-    # TODO: inclure vol_i_20/60, ewma_vol_i, mom_i_20/60/252, dd_i_60/252.
-    # TODO: calculer downside_vol_i_60 (std des retours négatifs).
-    # TODO: calculer beta_i_60 et idio_vol_i_60 vs index marché.
-    # TODO: ajouter adv_20 et dollar_volume_20 si volume dispo.
-    # TODO: retourner un DataFrame indexé par date/ticker avec les features.
-    pass
+    if df is None or df.empty:
+        return pd.DataFrame(index=df.index if df is not None else None)
+
+    required = {"date", "ticker", "adj_close"}
+    if not required.issubset(df.columns):
+        missing = ", ".join(sorted(required - set(df.columns)))
+        raise KeyError(f"Missing required columns: {missing}")
+
+    data = df.copy()
+    if tickers is not None:
+        data = data[data["ticker"].isin(tickers)]
+    data["date"] = pd.to_datetime(data["date"], errors="coerce")
+    data = data.dropna(subset=["date"])
+    data = data.sort_values(["ticker", "date"])
+
+    mkt = build_market_index(data, tickers)
+    mkt_returns = compute_returns(mkt)
+
+    out_list = []
+    for ticker, g in data.groupby("ticker", sort=False):
+        g = g.sort_values("date")
+
+        mom = momentum(g).rename(
+            columns={
+                "mom_20": "mom_i_20",
+                "mom_60": "mom_i_60",
+                "mom_252": "mom_i_252",
+            }
+        )
+        vol = volatility(g).rename(
+            columns={
+                "vol_20": "vol_i_20",
+                "vol_60": "vol_i_60",
+                "emwa_vol": "ewma_vol_i",
+                "vol_of_vol_20": "vol_of_vol_i_20",
+            }
+        )
+        dd = drawdown(g).rename(
+            columns={
+                "dd_60": "dd_i_60",
+                "mdd_252": "mdd_i_252",
+            }
+        )
+
+        returns = compute_returns(g)
+        downside_vol = returns.where(returns < 0).rolling(60).std()
+        downside_vol = downside_vol.rename("downside_vol_i_60")
+
+        beta_idio = beta_idio_features(g, mkt_returns, window=60).rename(
+            columns={
+                "beta_60": "beta_i_60",
+                "idio_vol_60": "idio_vol_i_60",
+            }
+        )
+        liq = liquidity_features(g, window=20).rename(
+            columns={
+                "adv_20": "adv_i_20",
+                "dollar_volume_20": "dollar_volume_i_20",
+            }
+        )
+
+        feat = pd.concat(
+            [mom, vol, dd, downside_vol, beta_idio, liq],
+            axis=1,
+        )
+        feat["ticker"] = ticker
+        feat = feat.set_index("ticker", append=True)
+        out_list.append(feat)
+
+    out = pd.concat(out_list).sort_index()
+    return out
 
 
 def beta_idio_features(df: pd.DataFrame, mkt_returns: pd.Series, window: int = 60):
