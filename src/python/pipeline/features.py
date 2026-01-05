@@ -14,6 +14,9 @@ if CLEAN_PARQUET and out_dir.exists():
     shutil.rmtree(out_dir)
 out_dir.mkdir(parents=True, exist_ok=True)
 
+REGIME_DIR = out_dir / "regime"
+ASSET_DIR = out_dir / "assets"
+
 # ==================== Market Regimes ====================
 # ========================================================
 
@@ -512,3 +515,81 @@ def upsert_features(df: pd.DataFrame) -> int:
     )
 
     return table.num_rows
+
+
+# ======================== Runner ========================
+# ========================================================
+
+
+def load_prices_dataset() -> pd.DataFrame:
+    dataset = ds.dataset("data/parquet/prices", format="parquet", partitioning="hive")
+    return dataset.to_table().to_pandas()
+
+
+def write_features_dataset(
+    df: pd.DataFrame,
+    base_dir: Path,
+    partition_cols: list[str],
+    existing_data_behavior: str = "overwrite_or_ignore",
+) -> None:
+    if df is None or df.empty:
+        return
+    base_dir.mkdir(parents=True, exist_ok=True)
+
+    if "year" not in df.columns and "date" in df.columns:
+        dt = pd.to_datetime(df["date"], errors="coerce")
+        ok = dt.notna()
+        df = df.loc[ok].copy()
+        df["year"] = dt.loc[ok].dt.year.astype("int32")
+
+    table = pa.Table.from_pandas(df, preserve_index=False)
+    schema = []
+    for col in partition_cols:
+        if col not in df.columns:
+            raise KeyError(f"Missing partition column: {col}")
+        if col == "year":
+            schema.append((col, pa.int32()))
+        else:
+            schema.append((col, pa.string()))
+    partitioning = ds.partitioning(pa.schema(schema), flavor="hive")
+    ds.write_dataset(
+        table,
+        base_dir=str(base_dir),
+        format="parquet",
+        partitioning=partitioning,
+        existing_data_behavior=existing_data_behavior,
+    )
+
+
+def run_features_pipeline(existing_data_behavior: str = "overwrite_or_ignore") -> None:
+    prices = load_prices_dataset()
+    regime = regime_features(prices).reset_index().rename(columns={"index": "date"})
+    assets = asset_features(prices).reset_index()
+
+    write_features_dataset(
+        regime,
+        REGIME_DIR,
+        partition_cols=["year"],
+        existing_data_behavior=existing_data_behavior,
+    )
+    write_features_dataset(
+        assets,
+        ASSET_DIR,
+        partition_cols=["ticker", "year"],
+        existing_data_behavior=existing_data_behavior,
+    )
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Compute and write feature datasets.")
+    parser.add_argument(
+        "--existing-data-behavior",
+        default="overwrite_or_ignore",
+        choices=["overwrite_or_ignore", "overwrite", "error", "delete_matching", "append"],
+        help="Behavior when target dataset already has data.",
+    )
+    args = parser.parse_args()
+
+    run_features_pipeline(existing_data_behavior=args.existing_data_behavior)
