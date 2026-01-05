@@ -16,6 +16,7 @@ import pyarrow as pa
 import pyarrow.dataset as ds
 from pathlib import Path
 from statsmodels.tsa.regime_switching.markov_regression import MarkovRegression
+from hmmlearn.hmm import GaussianHMM
 from scipy.stats import multivariate_normal
 from ..pipeline.features import build_market_index, compute_returns
 from ..pipeline.regimes import load_regime_features
@@ -53,5 +54,9 @@ def hmm_model(df: pd.DataFrame, tickers: list[str] | None = None):
     out_mkt[f"sigma_2_mkt"] = sigma_2_mkt
 
     features = load_regime_features()
+    for i in features :
+        hmm_features = GaussianHMM(i, n_components=3, covariance_type = "diag", n_iter=200).fit()
+        
+
 
     return out_mkt

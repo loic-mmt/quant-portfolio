@@ -16,7 +16,6 @@ import pyarrow.dataset as ds
 from pathlib import Path
 import matplotlib.pyplot as plt
 from statsmodels.tsa.regime_switching.markov_regression import MarkovRegression
-from hmmlearn import hmm
 from scipy.stats import multivariate_normal
 from pandas.plotting import register_matplotlib_converters
 register_matplotlib_converters()
