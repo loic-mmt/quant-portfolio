@@ -647,6 +647,7 @@ def run_features_pipeline(existing_data_behavior: str = "overwrite_or_ignore") -
     last_regime = get_last_feature_date(conn, "regime", "__MARKET__")
     last_assets = get_all_last_feature_dates(conn, "assets")
 
+    print(f'\nLoading Prices...')
     prices = load_prices_dataset()
     if not full_recompute and (last_regime or last_assets):
         dates = [d for d in [last_regime, *last_assets.values()] if d is not None]
@@ -662,12 +663,14 @@ def run_features_pipeline(existing_data_behavior: str = "overwrite_or_ignore") -
         if ASSET_DIR.exists():
             shutil.rmtree(ASSET_DIR)
 
+    print(f'\nCalculating regime features...')
     regime = regime_features(prices)
     if not full_recompute and last_regime:
         cutoff = pd.to_datetime(last_regime)
         regime = regime[regime.index > cutoff]
     regime_out = regime.reset_index().rename(columns={"index": "date"})
 
+    print(f'\nCalculating asset features...')
     assets = asset_features(prices)
     assets_out = assets.reset_index()
     if not full_recompute and last_assets:
@@ -676,9 +679,12 @@ def run_features_pipeline(existing_data_behavior: str = "overwrite_or_ignore") -
         cutoff = assets_out["ticker"].map(last_map).fillna(pd.Timestamp.min)
         assets_out = assets_out[assets_out["date"] > cutoff]
 
+    print(f'\nNumber of NA values in regime data : {regime_out.isna().sum()}')
+    print(f'Number of NA values in assets data : {assets_out.isna().sum()}')
     suffix = str(int(time.time()))
     basename_template = f"features_{suffix}_{{i}}.parquet" if not full_recompute else None
 
+    print(f'\nWriting regime features dataset...')
     write_features_dataset(
         regime_out,
         REGIME_DIR,
@@ -686,6 +692,7 @@ def run_features_pipeline(existing_data_behavior: str = "overwrite_or_ignore") -
         existing_data_behavior=existing_data_behavior,
         basename_template=basename_template,
     )
+    print(f'\nWriting assets features dataset...')
     write_features_dataset(
         assets_out,
         ASSET_DIR,
@@ -694,6 +701,7 @@ def run_features_pipeline(existing_data_behavior: str = "overwrite_or_ignore") -
         basename_template=basename_template,
     )
 
+    print(f'\nWriting lasts features dates in the SQL Database...')
     if not regime_out.empty:
         regime_out["ticker"] = "__MARKET__"
         upsert_feature_last_dates(conn, "regime", regime_out, ticker_col="ticker")
