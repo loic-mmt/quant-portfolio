@@ -22,7 +22,7 @@ def load_asset_features(ticker: str) -> pd.DataFrame:
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
     return df.sort_values("date")
 
-ticker = "SMCI"
+ticker = "AEG"
 features = load_asset_features(ticker)
 
 plt.figure(figsize=(10, 4))
