@@ -5,8 +5,9 @@ from sklearn import linear_model
 import pyarrow as pa
 import pyarrow.dataset as ds
 import shutil
-from scipy.stats import skew, kurtosis, variation, Covariance
 import sqlite3
+import time
+from scipy.stats import skew, kurtosis
 
 
 out_dir = Path("data/parquet/features")
@@ -17,6 +18,9 @@ out_dir.mkdir(parents=True, exist_ok=True)
 
 REGIME_DIR = out_dir / "regime"
 ASSET_DIR = out_dir / "assets"
+DB_PATH = Path("data/_meta.db")
+DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+
 
 # ==================== Market Regimes ====================
 # ========================================================
@@ -183,7 +187,7 @@ def _pivot_prices_returns(df: pd.DataFrame, tickers: list[str] | None = None):
         data.pivot_table(index="date", columns="ticker", values="adj_close", aggfunc="last")
         .sort_index()
     )
-    returns = prices.pct_change()
+    returns = np.log(prices / prices.shift(1))
     return prices, returns
 
 
@@ -521,65 +525,74 @@ def upsert_features(df: pd.DataFrame) -> int:
 # ======================== Runner ========================
 # ========================================================
 
-DB_PATH = Path("data/_meta.db")
-def init_db(conn: sqlite3.Connection) -> None:
+
+def init_features_db(conn: sqlite3.Connection) -> None:
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS feature_last_dates (
-          ticker     TEXT NOT NULL,
-          date       TEXT NOT NULL,  -- YYYY-MM-DD
-          open       REAL,
-          high       REAL,
-          low        REAL,
-          close      REAL,
-          adj_close  REAL,
-          volume     INTEGER,
-          PRIMARY KEY (ticker, date)
+          feature   TEXT NOT NULL,
+          ticker    TEXT NOT NULL,
+          date      TEXT NOT NULL,  -- YYYY-MM-DD
+          PRIMARY KEY (feature, ticker)
         );
         """
     )
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_last_dates_ticker ON last_dates(ticker);")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_last_dates_date ON last_dates(date);")
-    conn.commit()
-
-
-def upsert_last_dates(conn: sqlite3.Connection, df: pd.DataFrame) -> str | None:
-    """Store ONLY the latest available date for this ticker in SQLite.
-
-    Returns the latest date (YYYY-MM-DD) or None.
-    """
-    if df is None or df.empty:
-        return None
-
-    df_last = df.sort_values("date").tail(1)
-    last_date = df_last.iloc[0]["date"]
-
-    sql = """
-    INSERT INTO last_dates (ticker, date, open, high, low, close, adj_close, volume)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(ticker, date) DO UPDATE SET
-      open      = excluded.open,
-      high      = excluded.high,
-      low       = excluded.low,
-      close     = excluded.close,
-      adj_close = excluded.adj_close,
-      volume    = excluded.volume;
-    """
-
-    row = (
-        df_last.iloc[0]["ticker"],
-        df_last.iloc[0]["date"],
-        float(df_last.iloc[0]["open"]) if pd.notna(df_last.iloc[0]["open"]) else None,
-        float(df_last.iloc[0]["high"]) if pd.notna(df_last.iloc[0]["high"]) else None,
-        float(df_last.iloc[0]["low"]) if pd.notna(df_last.iloc[0]["low"]) else None,
-        float(df_last.iloc[0]["close"]) if pd.notna(df_last.iloc[0]["close"]) else None,
-        float(df_last.iloc[0]["adj_close"]) if pd.notna(df_last.iloc[0]["adj_close"]) else None,
-        int(df_last.iloc[0]["volume"]) if pd.notna(df_last.iloc[0]["volume"]) else None,
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_feature_last_dates_feature ON feature_last_dates(feature);"
     )
-
-    conn.execute(sql, row)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_feature_last_dates_ticker ON feature_last_dates(ticker);"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_feature_last_dates_date ON feature_last_dates(date);"
+    )
     conn.commit()
-    return last_date
+
+
+def get_last_feature_date(conn: sqlite3.Connection, feature: str, ticker: str) -> str | None:
+    row = conn.execute(
+        "SELECT date FROM feature_last_dates WHERE feature = ? AND ticker = ?",
+        (feature, ticker),
+    ).fetchone()
+    return row[0] if row else None
+
+
+def get_all_last_feature_dates(conn: sqlite3.Connection, feature: str) -> dict[str, str]:
+    rows = conn.execute(
+        "SELECT ticker, date FROM feature_last_dates WHERE feature = ?",
+        (feature,),
+    ).fetchall()
+    return {ticker: date for ticker, date in rows}
+
+
+def upsert_feature_last_dates(
+    conn: sqlite3.Connection,
+    feature: str,
+    df: pd.DataFrame,
+    ticker_col: str = "ticker",
+    date_col: str = "date",
+) -> None:
+    if df is None or df.empty:
+        return
+    if ticker_col not in df.columns or date_col not in df.columns:
+        missing = ", ".join(sorted({ticker_col, date_col} - set(df.columns)))
+        raise KeyError(f"Missing columns: {missing}")
+
+    dt = pd.to_datetime(df[date_col], errors="coerce")
+    ok = dt.notna()
+    df = df.loc[ok].copy()
+    df[date_col] = dt.loc[ok].dt.strftime("%Y-%m-%d")
+
+    last_by_ticker = df.groupby(ticker_col)[date_col].max()
+    sql = """
+    INSERT INTO feature_last_dates (feature, ticker, date)
+    VALUES (?, ?, ?)
+    ON CONFLICT(feature, ticker) DO UPDATE SET
+      date = excluded.date;
+    """
+    for ticker, last_date in last_by_ticker.items():
+        conn.execute(sql, (feature, str(ticker), str(last_date)))
+    conn.commit()
 
 
 def load_prices_dataset() -> pd.DataFrame:
@@ -592,6 +605,7 @@ def write_features_dataset(
     base_dir: Path,
     partition_cols: list[str],
     existing_data_behavior: str = "overwrite_or_ignore",
+    basename_template: str | None = None,
 ) -> None:
     if df is None or df.empty:
         return
@@ -619,26 +633,74 @@ def write_features_dataset(
         format="parquet",
         partitioning=partitioning,
         existing_data_behavior=existing_data_behavior,
+        basename_template=basename_template,
     )
 
 
 def run_features_pipeline(existing_data_behavior: str = "overwrite_or_ignore") -> None:
+    conn = sqlite3.connect(DB_PATH)
+    init_features_db(conn)
+
+    full_recompute = existing_data_behavior in {"overwrite", "delete_matching"}
+    lookback_days = 260
+
+    last_regime = get_last_feature_date(conn, "regime", "__MARKET__")
+    last_assets = get_all_last_feature_dates(conn, "assets")
+
     prices = load_prices_dataset()
-    regime = regime_features(prices).reset_index().rename(columns={"index": "date"})
-    assets = asset_features(prices).reset_index()
+    if not full_recompute and (last_regime or last_assets):
+        dates = [d for d in [last_regime, *last_assets.values()] if d is not None]
+        if dates:
+            min_last = pd.to_datetime(min(dates))
+            start_date = min_last - pd.Timedelta(days=lookback_days)
+            prices["date"] = pd.to_datetime(prices["date"], errors="coerce")
+            prices = prices[prices["date"] >= start_date]
+
+    if full_recompute:
+        if REGIME_DIR.exists():
+            shutil.rmtree(REGIME_DIR)
+        if ASSET_DIR.exists():
+            shutil.rmtree(ASSET_DIR)
+
+    regime = regime_features(prices)
+    if not full_recompute and last_regime:
+        cutoff = pd.to_datetime(last_regime)
+        regime = regime[regime.index > cutoff]
+    regime_out = regime.reset_index().rename(columns={"index": "date"})
+
+    assets = asset_features(prices)
+    assets_out = assets.reset_index()
+    if not full_recompute and last_assets:
+        assets_out["date"] = pd.to_datetime(assets_out["date"], errors="coerce")
+        last_map = pd.Series(last_assets)
+        cutoff = assets_out["ticker"].map(last_map).fillna(pd.Timestamp.min)
+        assets_out = assets_out[assets_out["date"] > cutoff]
+
+    suffix = str(int(time.time()))
+    basename_template = f"features_{suffix}_{{i}}.parquet" if not full_recompute else None
 
     write_features_dataset(
-        regime,
+        regime_out,
         REGIME_DIR,
         partition_cols=["year"],
         existing_data_behavior=existing_data_behavior,
+        basename_template=basename_template,
     )
     write_features_dataset(
-        assets,
+        assets_out,
         ASSET_DIR,
         partition_cols=["ticker", "year"],
         existing_data_behavior=existing_data_behavior,
+        basename_template=basename_template,
     )
+
+    if not regime_out.empty:
+        regime_out["ticker"] = "__MARKET__"
+        upsert_feature_last_dates(conn, "regime", regime_out, ticker_col="ticker")
+    if not assets_out.empty:
+        upsert_feature_last_dates(conn, "assets", assets_out, ticker_col="ticker")
+
+    conn.close()
 
 
 if __name__ == "__main__":
@@ -648,7 +710,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--existing-data-behavior",
         default="overwrite_or_ignore",
-        choices=["overwrite_or_ignore", "overwrite", "error", "delete_matching", "append"],
+        choices=["overwrite_or_ignore", "overwrite", "error", "delete_matching"],
         help="Behavior when target dataset already has data.",
     )
     args = parser.parse_args()
