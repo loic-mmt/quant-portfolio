@@ -6,6 +6,7 @@ import pyarrow as pa
 import pyarrow.dataset as ds
 import shutil
 from scipy.stats import skew, kurtosis, variation, Covariance
+import sqlite3
 
 
 out_dir = Path("data/parquet/features")
@@ -519,6 +520,66 @@ def upsert_features(df: pd.DataFrame) -> int:
 
 # ======================== Runner ========================
 # ========================================================
+
+DB_PATH = Path("data/_meta.db")
+def init_db(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS feature_last_dates (
+          ticker     TEXT NOT NULL,
+          date       TEXT NOT NULL,  -- YYYY-MM-DD
+          open       REAL,
+          high       REAL,
+          low        REAL,
+          close      REAL,
+          adj_close  REAL,
+          volume     INTEGER,
+          PRIMARY KEY (ticker, date)
+        );
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_last_dates_ticker ON last_dates(ticker);")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_last_dates_date ON last_dates(date);")
+    conn.commit()
+
+
+def upsert_last_dates(conn: sqlite3.Connection, df: pd.DataFrame) -> str | None:
+    """Store ONLY the latest available date for this ticker in SQLite.
+
+    Returns the latest date (YYYY-MM-DD) or None.
+    """
+    if df is None or df.empty:
+        return None
+
+    df_last = df.sort_values("date").tail(1)
+    last_date = df_last.iloc[0]["date"]
+
+    sql = """
+    INSERT INTO last_dates (ticker, date, open, high, low, close, adj_close, volume)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(ticker, date) DO UPDATE SET
+      open      = excluded.open,
+      high      = excluded.high,
+      low       = excluded.low,
+      close     = excluded.close,
+      adj_close = excluded.adj_close,
+      volume    = excluded.volume;
+    """
+
+    row = (
+        df_last.iloc[0]["ticker"],
+        df_last.iloc[0]["date"],
+        float(df_last.iloc[0]["open"]) if pd.notna(df_last.iloc[0]["open"]) else None,
+        float(df_last.iloc[0]["high"]) if pd.notna(df_last.iloc[0]["high"]) else None,
+        float(df_last.iloc[0]["low"]) if pd.notna(df_last.iloc[0]["low"]) else None,
+        float(df_last.iloc[0]["close"]) if pd.notna(df_last.iloc[0]["close"]) else None,
+        float(df_last.iloc[0]["adj_close"]) if pd.notna(df_last.iloc[0]["adj_close"]) else None,
+        int(df_last.iloc[0]["volume"]) if pd.notna(df_last.iloc[0]["volume"]) else None,
+    )
+
+    conn.execute(sql, row)
+    conn.commit()
+    return last_date
 
 
 def load_prices_dataset() -> pd.DataFrame:
