@@ -1,23 +1,25 @@
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
 import pyarrow as pa
 import pyarrow.dataset as ds
-import pyarrow.parquet as pq
-import pandas as pd
 from pathlib import Path
-import shutil 
+
+out_dir = Path("data/parquet/features")
+REGIME_DIR = out_dir / "regime"
+ASSET_DIR = out_dir / "assets"
+DB_PATH = Path("data/_meta.db")
+
+def load_prices_dataset() -> pd.DataFrame:
+    dataset = ds.dataset("data/parquet/prices", format="parquet", partitioning="hive")
+    return dataset.to_table().to_pandas()
+
+def load_features_dataset() -> pd.DataFrame:
+    dataset = ds.dataset("data/parquet/features", format="parquet", partitioning="hive")
+    return dataset.to_table().to_pandas()
+
+prices = load_prices_dataset()
+features = load_features_dataset()
 
 
-out_dir = Path("../data/parquet/features")
-CLEAN_PARQUET = False  # set True only if you want to reset the dataset
-if CLEAN_PARQUET and out_dir.exists():
-    shutil.rmtree(out_dir)
-out_dir.mkdir(parents=True, exist_ok=True)
-
-if __name__ == "__main__":
-    # --- Read dataset (Hive partition discovery adds asset/year as virtual columns) ---
-    dataset = ds.dataset(str(out_dir), format="parquet", partitioning="hive")
-    print("Discovered schema:", dataset.schema)
-
-    table = dataset.to_table(filter=(ds.field("ticker")) & (ds.field("year")),
-                            columns=["date", "Adj Close", "Volume"])
-    df = table.to_pandas()
-    print(df.head())
+plt.plot(features['vol_i_60'])
