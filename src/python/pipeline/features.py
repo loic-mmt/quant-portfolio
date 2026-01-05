@@ -679,8 +679,8 @@ def run_features_pipeline(existing_data_behavior: str = "overwrite_or_ignore") -
         cutoff = assets_out["ticker"].map(last_map).fillna(pd.Timestamp.min)
         assets_out = assets_out[assets_out["date"] > cutoff]
 
-    print(f'\nNumber of NA values in regime data : {regime_out.isna().sum()}')
-    print(f'Number of NA values in assets data : {assets_out.isna().sum()}')
+    print(f'\nNumber of NA values in regime data : \n{regime_out.isna().sum()}')
+    print(f'\nNumber of NA values in assets data : \n{assets_out.isna().sum()}')
     suffix = str(int(time.time()))
     basename_template = f"features_{suffix}_{{i}}.parquet" if not full_recompute else None
 
@@ -701,7 +701,7 @@ def run_features_pipeline(existing_data_behavior: str = "overwrite_or_ignore") -
         basename_template=basename_template,
     )
 
-    print(f'\nWriting lasts features dates in the SQL Database...')
+    print(f'\nWriting lasts features dates in the SQL Database...\n')
     if not regime_out.empty:
         regime_out["ticker"] = "__MARKET__"
         upsert_feature_last_dates(conn, "regime", regime_out, ticker_col="ticker")
