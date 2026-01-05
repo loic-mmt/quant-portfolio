@@ -11,52 +11,43 @@ Contient la logique du modèle :
 
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-import pyarrow as pa
-import pyarrow.dataset as ds
-from pathlib import Path
 from statsmodels.tsa.regime_switching.markov_regression import MarkovRegression
 from hmmlearn.hmm import GaussianHMM
-from scipy.stats import multivariate_normal
-from ..pipeline.features import build_market_index, compute_returns
-from ..pipeline.regimes import load_regime_features
+
+def fit_markov_market(mkt_returns: pd.Series, k_regimes: int = 2):
+    """Fit a Markov switching model on a 1D market return series."""
+    if mkt_returns is None or mkt_returns.empty:
+        raise ValueError("mkt_returns is empty.")
+    mkt_returns = mkt_returns.dropna()
+    # TODO: add input checks (frequency, minimum length, dtype).
+    model = MarkovRegression(mkt_returns, k_regimes=k_regimes, switching_variance=True)
+    results = model.fit()
+    return results
 
 
-ROOT = Path(__file__).resolve().parents[1]
-out_dir = ROOT / "data/parquet/features"
-REGIME_DIR = out_dir / "regime"
-ASSET_DIR = out_dir / "assets"
+def fit_hmm_features(X: pd.DataFrame, n_states: int = 3, covariance_type: str = "diag"):
+    """Fit a Gaussian HMM on multivariate features."""
+    if X is None or X.empty:
+        raise ValueError("X is empty.")
+    X = X.dropna()
+    if X.empty:
+        raise ValueError("X has only NaNs after dropna.")
+    # TODO: standardize X outside (pipeline/regimes.py) and pass as numpy array.
+    model = GaussianHMM(n_components=n_states, covariance_type=covariance_type, n_iter=200)
+    model.fit(X.to_numpy())
+    return model
 
 
-def hmm_model(df: pd.DataFrame, tickers: list[str] | None = None):
-    if df is None or df.empty:
-        return pd.DataFrame(index=df.index if df is not None else None)
-    mkt = build_market_index(df, tickers)
-    mkt_returns = compute_returns(mkt)
-
-    model_mkt = MarkovRegression(mkt_returns, k_regimes=2, switching_variance=True).fit()
-    print(model_mkt.summary())
-    regime_mkt = pd.Series(model_mkt.smoothed_marginal_probabilities.values.argmax(axis=1)+1, 
-                      index=features.index, name='regime')
-    df_1_mkt = features.loc[features.index][regime_mkt == 1]
-    df_2_mkt = features.loc[features.index][regime_mkt == 2]
-    mean_mkt = np.array([features.loc[df_1_mkt.index].mean(), features.loc[df_2_mkt.index].mean()])
-    cov_mkt = np.array([[features.loc[df_1_mkt.index].var(), 0], [0, features.loc[df_2_mkt.index].var()]])
-    dist_mkt = multivariate_normal(mean=mean_mkt.flatten(), cov=cov_mkt)
-    mean_1_mkt, mean_2_mkt = mean_mkt[0], mean_mkt[1]
-    sigma_1_mkt, sigma_2_mkt = cov_mkt[0,0], cov_mkt[1,1]
-
-    out_mkt = pd.DataFrame(index=mkt_returns.index)
-    out_mkt[f"dist_mkt"] = dist_mkt
-    out_mkt[f"mean_1_mkt"] = mean_1_mkt
-    out_mkt[f"mean_2_mkt"] = mean_2_mkt
-    out_mkt[f"sigma_1_mkt"] = sigma_1_mkt
-    out_mkt[f"sigma_2_mkt"] = sigma_2_mkt
-
-    features = load_regime_features()
-    for i in features :
-        hmm_features = GaussianHMM(i, n_components=3, covariance_type = "diag", n_iter=200).fit()
-        
+def hmm_states_from_model(model: GaussianHMM, X: pd.DataFrame) -> pd.Series:
+    """Return most likely state for each observation."""
+    # TODO: handle alignment and NaNs consistently with pipeline.
+    states = model.predict(X.to_numpy())
+    return pd.Series(states, index=X.index, name="state")
 
 
-    return out_mkt
+def hmm_proba_from_model(model: GaussianHMM, X: pd.DataFrame) -> pd.DataFrame:
+    """Return state probabilities for each observation."""
+    # TODO: handle alignment and NaNs consistently with pipeline.
+    proba = model.predict_proba(X.to_numpy())
+    cols = [f"p_state_{i}" for i in range(proba.shape[1])]
+    return pd.DataFrame(proba, index=X.index, columns=cols)
