@@ -1,0 +1,14 @@
+train_end: "2024-01-01"
+regime_features:
+  - mom_mkt_20
+  - mom_mkt_60
+  - vol_mkt_20
+  - vol_mkt_60
+  - ewma_vol_mkt
+  - dd_mkt_60
+  - vol_of_vol_20
+  - avg_corr_20
+  - avg_corr_60
+  - disp_20
+  - breadth_up_20
+  - breadth_ma50

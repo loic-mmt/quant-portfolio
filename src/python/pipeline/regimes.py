@@ -16,37 +16,75 @@ from __future__ import annotations
 
 from pathlib import Path
 import pandas as pd
+import numpy as np
 import pyarrow as pa
 import pyarrow.dataset as ds
 import sqlite3
-from models.hmm import fit_markov_market, fit_hmm_features, hmm_states_from_model, hmm_proba_from_model
+import time
+import shutil
+from typing import Any
+from ..models.hmm import (
+    fit_markov_market,
+    fit_hmm_features,
+    hmm_states_from_model,
+    hmm_proba_from_model,
+)
 
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 FEATURES_DIR = ROOT / "data/parquet/features/assets"
 FEATURES_REGIME_DIR = ROOT / "data/parquet/features/regime"
 REGIMES_DIR = ROOT / "data/parquet/regimes"
-DB_PATH = Path("data/_meta.db")
+DB_PATH = ROOT / "data/_meta.db"
+DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+CONFIG_PATH = ROOT / "config/regimes.yaml"
+
+try:
+    import yaml  # type: ignore
+except Exception:  # pragma: no cover
+    yaml = None
 
 
-def load_regime_features() -> pd.DataFrame:
+def load_regime_features() -> tuple[pd.DataFrame, pd.DataFrame]:
     # TODO: load parquet dataset from FEATURES_DIR (hive) and parse date.
 
-    dataset_assets = ds.dataset(FEATURES_DIR, format="parquet", partitioning="hive")
-    dataset_regime = ds.dataset(FEATURES_REGIME_DIR, format="parquet", partitioning="hive")
-    return dataset_assets.to_table().to_pandas(), dataset_regime.to_table().to_pandas()
+    dataset_assets = ds.dataset(str(FEATURES_DIR), format="parquet", partitioning="hive")
+    dataset_regime = ds.dataset(str(FEATURES_REGIME_DIR), format="parquet", partitioning="hive")
+    df_assets = dataset_assets.to_table().to_pandas()
+    df_regime = dataset_regime.to_table().to_pandas()
+    if "date" in df_assets.columns:
+        df_assets["date"] = pd.to_datetime(df_assets["date"], errors="coerce")
+    if "date" in df_regime.columns:
+        df_regime["date"] = pd.to_datetime(df_regime["date"], errors="coerce")
+    return df_assets, df_regime
+
+
+def load_regime_config() -> dict[str, Any]:
+    if not CONFIG_PATH.exists():
+        return {}
+    content = CONFIG_PATH.read_text().strip()
+    if not content:
+        return {}
+    if yaml is None:
+        raise ImportError("PyYAML is required to parse config/regimes.yaml.")
+    data = yaml.safe_load(content)
+    return data if isinstance(data, dict) else {}
 
 
 def select_regime_features(df: pd.DataFrame, feature_cols: list[str]) -> pd.DataFrame:
     # TODO: keep only numeric columns in feature_cols, drop rows with NaNs as needed.
     if df is None or df.empty:
         raise ValueError("X is empty.")
-    df = df.apply(pd.to_numeric, errors="coerce").dropna()
-    if df.empty:
+    if "date" in df.columns:
+        df = df.sort_values("date").set_index("date")
+    missing = [c for c in feature_cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"Missing columns: {missing}")
+    X = df[feature_cols].apply(pd.to_numeric, errors="coerce")
+    X = X.dropna()
+    if X.empty:
         raise ValueError("X has only NaNs after dropna.")
-    if feature_cols not in df.columns:
-        raise ValueError("Columns missins.")
-    return df
+    return X
 
 
 def standardize_train_apply_all(
@@ -54,27 +92,26 @@ def standardize_train_apply_all(
     train_end: str,
 ) -> tuple[pd.DataFrame, pd.Series, pd.Series]:
     # TODO: compute mean/std on train slice, apply to full df (z-score).
-    train = df[: train_end]
-    test = df[train_end:]
-    zscore = train.mean().std()
-    return zscore, train, test
+    train_end_dt = pd.to_datetime(train_end)
+    train = df.loc[:train_end_dt]
+    mean = train.mean()
+    std = train.std().replace(0, np.nan)
+    df_z = (df - mean) / std
+    return df_z, mean, std
 
 
-def fit_regime_model(df_z: pd.DataFrame, df_mkt: pd.DataFrame):
+def fit_regime_model(df_z: pd.DataFrame, mkt_returns: pd.Series):
     # TODO: call models.hmm.fit_hmm_features or fit_markov_market depending on config.
-    results_hmm_mkt = fit_markov_market(df_mkt)
+    results_hmm_mkt = fit_markov_market(mkt_returns)
     hmm_features = fit_hmm_features(df_z)
     return results_hmm_mkt, hmm_features
 
 
-def build_regime_outputs(
-    model,
-    df_z: pd.DataFrame,
-) -> pd.DataFrame:
+def build_regime_outputs(model, df_z: pd.DataFrame) -> pd.DataFrame:
     # TODO: compute state/proba using models.hmm helpers.
     states = hmm_states_from_model(model, df_z)
     proba = hmm_proba_from_model(model, df_z)
-    return states, proba
+    return pd.concat([states, proba], axis=1)
 
 
 def init_features_db(conn: sqlite3.Connection) -> None:
@@ -84,26 +121,26 @@ def init_features_db(conn: sqlite3.Connection) -> None:
           feature   TEXT NOT NULL,
           ticker    TEXT NOT NULL,
           date      TEXT NOT NULL,  -- YYYY-MM-DD
-          state     INTEGER NOT NULL
-          proba     INTEGER NOT NULL
+          state     INTEGER,
+          proba     REAL,
           PRIMARY KEY (feature, ticker)
         );
         """
     )
     conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_regimes_last_dates_feature ON feature_last_dates(feature);"
+        "CREATE INDEX IF NOT EXISTS idx_regimes_last_dates_feature ON regimes_last_dates(feature);"
     )
     conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_regimes_last_dates_ticker ON feature_last_dates(ticker);"
+        "CREATE INDEX IF NOT EXISTS idx_regimes_last_dates_ticker ON regimes_last_dates(ticker);"
     )
     conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_regimes_last_dates_date ON feature_last_dates(date);"
+        "CREATE INDEX IF NOT EXISTS idx_regimes_last_dates_date ON regimes_last_dates(date);"
     )
     conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_regimes_last_dates_state ON feature_last_dates(state);"
+        "CREATE INDEX IF NOT EXISTS idx_regimes_last_dates_state ON regimes_last_dates(state);"
     )
     conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_regimes_last_dates_proba ON feature_last_dates(proba);"
+        "CREATE INDEX IF NOT EXISTS idx_regimes_last_dates_proba ON regimes_last_dates(proba);"
     )
     conn.commit()
 
@@ -162,7 +199,6 @@ def write_regimes_dataset(
     existing_data_behavior: str = "overwrite_or_ignore",
     basename_template: str | None = None,
 ) -> None:
-    base_dir = REGIMES_DIR
     if df is None or df.empty:
         return
     base_dir.mkdir(parents=True, exist_ok=True)
@@ -199,24 +235,63 @@ def run_regime_pipeline(existing_data_behavior: str = "overwrite_or_ignore") -> 
     init_features_db(conn)
 
     full_recompute = existing_data_behavior in {"overwrite", "delete_matching"}
+    last_regime = get_last_regime_date(conn, "regime", "__MARKET__")
     lookback_days = 260
 
-    last_regime = get_last_regime_date(conn, "regime", "__MARKET__")
-    last_assets = get_all_last_regime_dates(conn, "assets")
-
     df_assets, df_regimes = load_regime_features()
-    df_assets = select_regime_features(df_assets)
-    df_regimes = select_regime_features(df_regimes)
+    if "date" in df_regimes.columns and not full_recompute and last_regime:
+        cutoff = pd.to_datetime(last_regime) - pd.Timedelta(days=lookback_days)
+        df_regimes = df_regimes[df_regimes["date"] >= cutoff]
 
-    zscore_assets, train_assets, test_assets = standardize_train_apply_all(df_assets, '01/01/2024')
-    zscore_regimes, train_regimes, test_regimes = standardize_train_apply_all(df_regimes, '01/01/2024')
+    cfg = load_regime_config()
+    regime_cols = cfg.get("regime_features")
+    if not isinstance(regime_cols, list) or not regime_cols:
+        regime_cols = [c for c in df_regimes.columns if c not in {"date", "year"}]
 
-    results_hmm_mkt, hmm_features = fit_regime_model(train_assets, train_regimes)
-    states, proba = build_regime_outputs(hmm_features, test_assets)
+    X_regime = select_regime_features(df_regimes, regime_cols)
+    X_regime_z, _, _ = standardize_train_apply_all(X_regime, cfg.get("train_end", "2024-01-01"))
 
-    upsert_regime_last_dates()
-    write_regimes_dataset()
+    mkt_returns = df_regimes.set_index("date").get("mom_mkt_20")
+    if mkt_returns is None:
+        raise KeyError("mom_mkt_20 column is required for market returns.")
+    mkt_returns = mkt_returns.dropna()
+
+    _, hmm_features = fit_regime_model(X_regime_z, mkt_returns)
+    outputs = build_regime_outputs(hmm_features, X_regime_z)
+    outputs = outputs.reset_index().rename(columns={"index": "date"})
+
+    if not full_recompute and last_regime:
+        outputs["date"] = pd.to_datetime(outputs["date"], errors="coerce")
+        outputs = outputs[outputs["date"] > pd.to_datetime(last_regime)]
+
+    if not outputs.empty:
+        outputs["ticker"] = "__MARKET__"
+        upsert_regime_last_dates(conn, "regime", outputs, ticker_col="ticker")
+
+    if full_recompute and REGIMES_DIR.exists():
+        shutil.rmtree(REGIMES_DIR)
+
+    suffix = str(int(time.time()))
+    basename_template = f"regimes_{suffix}_{{i}}.parquet" if not full_recompute else None
+    write_regimes_dataset(
+        outputs,
+        REGIMES_DIR,
+        partition_cols=["year"],
+        existing_data_behavior=existing_data_behavior,
+        basename_template=basename_template,
+    )
+    conn.close()
 
 if __name__ == "__main__":
-    # TODO: parse args (train_end, model type, feature list, etc.)
-    run_regime_pipeline()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Compute and write feature datasets.")
+    parser.add_argument(
+        "--existing-data-behavior",
+        default="overwrite_or_ignore",
+        choices=["overwrite_or_ignore", "overwrite", "error", "delete_matching"],
+        help="Behavior when target dataset already has data.",
+    )
+    args = parser.parse_args()
+
+    run_regime_pipeline(existing_data_behavior=args.existing_data_behavior)
