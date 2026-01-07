@@ -39,12 +39,16 @@ def select_regime_features(df: pd.DataFrame, feature_cols: list[str]) -> pd.Data
     pass
 
 
+
 def standardize_train_apply_all(
     df: pd.DataFrame,
     train_end: str,
 ) -> tuple[pd.DataFrame, pd.Series, pd.Series]:
     # TODO: compute mean/std on train slice, apply to full df (z-score).
-    pass
+    train = df[: train_end]
+    test = df[train_end:]
+    zscore = train.mean().std()
+    return zscore, train, test
 
 
 def fit_regime_model(df_z: pd.DataFrame):
