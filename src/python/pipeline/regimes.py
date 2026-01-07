@@ -32,7 +32,6 @@ from ..models.hmm import (
 
 
 ROOT = Path(__file__).resolve().parents[3]
-FEATURES_DIR = ROOT / "data/parquet/features/assets"
 FEATURES_REGIME_DIR = ROOT / "data/parquet/features/regime"
 REGIMES_DIR = ROOT / "data/parquet/regimes"
 DB_PATH = ROOT / "data/_meta.db"
@@ -45,18 +44,12 @@ except Exception:  # pragma: no cover
     yaml = None
 
 
-def load_regime_features() -> tuple[pd.DataFrame, pd.DataFrame]:
-    # TODO: load parquet dataset from FEATURES_DIR (hive) and parse date.
-
-    dataset_assets = ds.dataset(str(FEATURES_DIR), format="parquet", partitioning="hive")
+def load_regime_features() -> pd.DataFrame:
     dataset_regime = ds.dataset(str(FEATURES_REGIME_DIR), format="parquet", partitioning="hive")
-    df_assets = dataset_assets.to_table().to_pandas()
     df_regime = dataset_regime.to_table().to_pandas()
-    if "date" in df_assets.columns:
-        df_assets["date"] = pd.to_datetime(df_assets["date"], errors="coerce")
     if "date" in df_regime.columns:
         df_regime["date"] = pd.to_datetime(df_regime["date"], errors="coerce")
-    return df_assets, df_regime
+    return df_regime
 
 
 def load_regime_config() -> dict[str, Any]:
@@ -72,7 +65,6 @@ def load_regime_config() -> dict[str, Any]:
 
 
 def select_regime_features(df: pd.DataFrame, feature_cols: list[str]) -> pd.DataFrame:
-    # TODO: keep only numeric columns in feature_cols, drop rows with NaNs as needed.
     if df is None or df.empty:
         raise ValueError("X is empty.")
     if "date" in df.columns:
@@ -91,7 +83,6 @@ def standardize_train_apply_all(
     df: pd.DataFrame,
     train_end: str,
 ) -> tuple[pd.DataFrame, pd.Series, pd.Series]:
-    # TODO: compute mean/std on train slice, apply to full df (z-score).
     train_end_dt = pd.to_datetime(train_end)
     train = df.loc[:train_end_dt]
     mean = train.mean()
@@ -101,14 +92,12 @@ def standardize_train_apply_all(
 
 
 def fit_regime_model(df_z: pd.DataFrame, mkt_returns: pd.Series):
-    # TODO: call models.hmm.fit_hmm_features or fit_markov_market depending on config.
     results_hmm_mkt = fit_markov_market(mkt_returns)
     hmm_features = fit_hmm_features(df_z)
     return results_hmm_mkt, hmm_features
 
 
 def build_regime_outputs(model, df_z: pd.DataFrame) -> pd.DataFrame:
-    # TODO: compute state/proba using models.hmm helpers.
     states = hmm_states_from_model(model, df_z)
     proba = hmm_proba_from_model(model, df_z)
     return pd.concat([states, proba], axis=1)
@@ -230,7 +219,6 @@ def write_regimes_dataset(
 
 
 def run_regime_pipeline(existing_data_behavior: str = "overwrite_or_ignore") -> None:
-    # TODO: wire all steps: load -> select -> standardize -> fit -> outputs -> write.
     conn = sqlite3.connect(DB_PATH)
     init_features_db(conn)
 
@@ -238,7 +226,7 @@ def run_regime_pipeline(existing_data_behavior: str = "overwrite_or_ignore") -> 
     last_regime = get_last_regime_date(conn, "regime", "__MARKET__")
     lookback_days = 260
 
-    df_assets, df_regimes = load_regime_features()
+    df_regimes = load_regime_features()
     if "date" in df_regimes.columns and not full_recompute and last_regime:
         cutoff = pd.to_datetime(last_regime) - pd.Timedelta(days=lookback_days)
         df_regimes = df_regimes[df_regimes["date"] >= cutoff]
