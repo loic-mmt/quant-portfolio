@@ -18,6 +18,7 @@ from pathlib import Path
 import pandas as pd
 import pyarrow as pa
 import pyarrow.dataset as ds
+import sqlite3
 from models.hmm import fit_markov_market, fit_hmm_features, hmm_states_from_model, hmm_proba_from_model
 
 
@@ -75,9 +76,112 @@ def build_regime_outputs(
     return states, proba
 
 
-def write_regimes_dataset(df: pd.DataFrame) -> None:
-    # TODO: add year column and write to REGIMES_DIR (hive partitioned).
-    pass
+def init_features_db(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS regimes_last_dates (
+          feature   TEXT NOT NULL,
+          ticker    TEXT NOT NULL,
+          date      TEXT NOT NULL,  -- YYYY-MM-DD
+          PRIMARY KEY (feature, ticker)
+        );
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_feature_last_dates_feature ON feature_last_dates(feature);"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_feature_last_dates_ticker ON feature_last_dates(ticker);"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_feature_last_dates_date ON feature_last_dates(date);"
+    )
+    conn.commit()
+
+
+def upsert_regime_last_dates(
+    conn: sqlite3.Connection,
+    feature: str,
+    df: pd.DataFrame,
+    ticker_col: str = "ticker",
+    date_col: str = "date",
+) -> None:
+    if df is None or df.empty:
+        return
+    if ticker_col not in df.columns or date_col not in df.columns:
+        missing = ", ".join(sorted({ticker_col, date_col} - set(df.columns)))
+        raise KeyError(f"Missing columns: {missing}")
+
+    dt = pd.to_datetime(df[date_col], errors="coerce")
+    ok = dt.notna()
+    df = df.loc[ok].copy()
+    df[date_col] = dt.loc[ok].dt.strftime("%Y-%m-%d")
+
+    last_by_ticker = df.groupby(ticker_col)[date_col].max()
+    sql = """
+    INSERT INTO regimes_last_dates (feature, ticker, date)
+    VALUES (?, ?, ?)
+    ON CONFLICT(feature, ticker) DO UPDATE SET
+      date = excluded.date;
+    """
+    for ticker, last_date in last_by_ticker.items():
+        conn.execute(sql, (feature, str(ticker), str(last_date)))
+    conn.commit()
+
+
+
+def get_last_feature_date(conn: sqlite3.Connection, feature: str, ticker: str) -> str | None:
+    row = conn.execute(
+        "SELECT date FROM regimes_last_dates WHERE feature = ? AND ticker = ?",
+        (feature, ticker),
+    ).fetchone()
+    return row[0] if row else None
+
+
+def get_all_last_feature_dates(conn: sqlite3.Connection, feature: str) -> dict[str, str]:
+    rows = conn.execute(
+        "SELECT ticker, date FROM regimes_last_dates WHERE feature = ?",
+        (feature,),
+    ).fetchall()
+    return {ticker: date for ticker, date in rows}
+
+
+def write_regimes_dataset(
+    df: pd.DataFrame,
+    base_dir: Path,
+    partition_cols: list[str],
+    existing_data_behavior: str = "overwrite_or_ignore",
+    basename_template: str | None = None,
+) -> None:
+    base_dir = REGIMES_DIR
+    if df is None or df.empty:
+        return
+    base_dir.mkdir(parents=True, exist_ok=True)
+
+    if "year" not in df.columns and "date" in df.columns:
+        dt = pd.to_datetime(df["date"], errors="coerce")
+        ok = dt.notna()
+        df = df.loc[ok].copy()
+        df["year"] = dt.loc[ok].dt.year.astype("int32")
+
+    table = pa.Table.from_pandas(df, preserve_index=False)
+    schema = []
+    for col in partition_cols:
+        if col not in df.columns:
+            raise KeyError(f"Missing partition column: {col}")
+        if col == "year":
+            schema.append((col, pa.int32()))
+        else:
+            schema.append((col, pa.string()))
+    partitioning = ds.partitioning(pa.schema(schema), flavor="hive")
+    ds.write_dataset(
+        table,
+        base_dir=str(base_dir),
+        format="parquet",
+        partitioning=partitioning,
+        existing_data_behavior=existing_data_behavior,
+        basename_template=basename_template,
+    )
 
 
 def run_regime_pipeline() -> None:
