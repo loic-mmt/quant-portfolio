@@ -83,18 +83,26 @@ def init_features_db(conn: sqlite3.Connection) -> None:
           feature   TEXT NOT NULL,
           ticker    TEXT NOT NULL,
           date      TEXT NOT NULL,  -- YYYY-MM-DD
+          state     INTEGER NOT NULL
+          proba     INTEGER NOT NULL
           PRIMARY KEY (feature, ticker)
         );
         """
     )
     conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_feature_last_dates_feature ON feature_last_dates(feature);"
+        "CREATE INDEX IF NOT EXISTS idx_regimes_last_dates_feature ON feature_last_dates(feature);"
     )
     conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_feature_last_dates_ticker ON feature_last_dates(ticker);"
+        "CREATE INDEX IF NOT EXISTS idx_regimes_last_dates_ticker ON feature_last_dates(ticker);"
     )
     conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_feature_last_dates_date ON feature_last_dates(date);"
+        "CREATE INDEX IF NOT EXISTS idx_regimes_last_dates_date ON feature_last_dates(date);"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_regimes_last_dates_state ON feature_last_dates(state);"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_regimes_last_dates_proba ON feature_last_dates(proba);"
     )
     conn.commit()
 
