@@ -37,7 +37,13 @@ def load_regime_features() -> pd.DataFrame:
 
 def select_regime_features(df: pd.DataFrame, feature_cols: list[str]) -> pd.DataFrame:
     # TODO: keep only numeric columns in feature_cols, drop rows with NaNs as needed.
-    pass
+    if df is None or df.empty:
+        raise ValueError("X is empty.")
+    df = df.apply(pd.to_numeric, errors="coerce").dropna()
+    if df.empty:
+        raise ValueError("X has only NaNs after dropna.")
+    if feature_cols not in df.columns:
+        raise ValueError("Columns missins.")
 
 
 
@@ -54,9 +60,9 @@ def standardize_train_apply_all(
 
 def fit_regime_model(df_z: pd.DataFrame, df_mkt: pd.DataFrame):
     # TODO: call models.hmm.fit_hmm_features or fit_markov_market depending on config.
-    hmm_mkt = fit_markov_market(df_mkt)
+    results_hmm_mkt = fit_markov_market(df_mkt)
     hmm_features = fit_hmm_features(df_z)
-    return hmm_mkt, hmm_features
+    return results_hmm_mkt, hmm_features
 
 
 def build_regime_outputs(
@@ -64,7 +70,9 @@ def build_regime_outputs(
     df_z: pd.DataFrame,
 ) -> pd.DataFrame:
     # TODO: compute state/proba using models.hmm helpers.
-    pass
+    states = hmm_states_from_model(model, df_z)
+    proba = hmm_proba_from_model(model, df_z)
+    return states, proba
 
 
 def write_regimes_dataset(df: pd.DataFrame) -> None:
