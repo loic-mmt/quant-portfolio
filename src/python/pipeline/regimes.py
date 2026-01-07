@@ -18,6 +18,7 @@ from pathlib import Path
 import pandas as pd
 import pyarrow as pa
 import pyarrow.dataset as ds
+from models.hmm import fit_markov_market, fit_hmm_features, hmm_states_from_model, hmm_proba_from_model
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -51,9 +52,11 @@ def standardize_train_apply_all(
     return zscore, train, test
 
 
-def fit_regime_model(df_z: pd.DataFrame):
+def fit_regime_model(df_z: pd.DataFrame, df_mkt: pd.DataFrame):
     # TODO: call models.hmm.fit_hmm_features or fit_markov_market depending on config.
-    pass
+    hmm_mkt = fit_markov_market(df_mkt)
+    hmm_features = fit_hmm_features(df_z)
+    return hmm_mkt, hmm_features
 
 
 def build_regime_outputs(
