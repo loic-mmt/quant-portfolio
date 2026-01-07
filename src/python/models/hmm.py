@@ -29,7 +29,6 @@ def fit_markov_market(mkt_returns: pd.Series, k_regimes: int=2):
     return results
 
 
-
 def fit_hmm_features(X: pd.DataFrame, n_states: int = 3, covariance_type: str = "diag"):
     """Fit a Gaussian HMM on multivariate features."""
     if X is None or X.empty:
