@@ -105,7 +105,6 @@ def simulate_paths(
     horizon: int,
     dist: str = "gaussian",
 ) -> np.ndarray:
-    # TODO: simulate MC paths (gaussian or t) and return paths array.
     if n_sims <= 0 or horizon <= 0:
         raise ValueError("n_sims and horizon must be positive.")
     if dist != "gaussian":
@@ -121,18 +120,17 @@ def simulate_paths(
 
 
 def summarize_paths(paths: np.ndarray, alpha: float = 0.05) -> dict[str, float]:
-    # TODO: compute VaR/CVaR/quantiles/probabilities from paths.
     if paths is None or len(paths) == 0:
         raise ValueError("paths is empty.")
-    arr = np.asarray(paths)
-    if arr.ndim == 1:
-        pnl = arr
-    else:
-        pnl = np.nansum(arr, axis=tuple(range(1, arr.ndim)))
+    arr = np.asarray(paths)  # Convertit `paths` en tableau numpy (au cas où ce n’était pas déjà un ndarray).
+    if arr.ndim == 1:  # Si le tableau est 1D, on considère qu’il contient déjà directement des PnL par scénario.
+        pnl = arr  # Assigne directement le tableau comme distribution de PnL.
+    else:  # Sinon, `arr` est multi-dimensionnel (ex: scénarios × temps × actifs, etc.).
+        pnl = np.nansum(arr, axis=tuple(range(1, arr.ndim)))  # Agrège chaque scénario en sommant sur toutes les dimensions sauf la première, en ignorant les NaN.
     pnl = np.asarray(pnl, dtype="float64")
-    var = np.nanquantile(pnl, alpha)
-    cvar = np.nanmean(pnl[pnl <= var]) if np.any(pnl <= var) else np.nan
-    q95 = np.nanquantile(pnl, 0.95)
+    var = np.nanquantile(pnl, alpha)  # Calcule la Value-at-Risk au niveau `alpha` (quantile bas), en ignorant les NaN.
+    cvar = np.nanmean(pnl[pnl <= var]) if np.any(pnl <= var) else np.nan  # Calcule la CVaR comme la moyenne des pertes <= VaR, sinon renvoie NaN si aucun point n’est dans la queue.
+    q95 = np.nanquantile(pnl, 0.95)  # Calcule le quantile 95% de la distribution de PnL (mesure de “bon scénario” / upside).
     return {"var": float(var), "cvar": float(cvar), "q95": float(q95)}
 
 
