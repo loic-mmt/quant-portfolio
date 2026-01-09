@@ -70,15 +70,32 @@ def calibrate_regime_params(
     regimes: pd.DataFrame,
     window: int,
 ) -> dict[int, dict[str, np.ndarray]]:
-    # TODO: estimate mu/Sigma per regime on rolling window.
-    span = len(regimes)
-    mu = returns.rolling(regimes.rolling(window)).mean()
-    sigma = ""
+    if returns is None or returns.empty:
+        raise ValueError("returns is empty.")
+    if regimes is None or regimes.empty:
+        raise ValueError("regimes is empty.")
+    if "state" not in regimes.columns:
+        raise KeyError("regimes must include a 'state' column.")
 
-    out = pd.DataFrame(index=mu.index)
-    out["mu"] = mu
-    out["sigma"] = sigma
-    return out
+    if "date" in regimes.columns:
+        regimes = regimes.set_index("date")
+    if "date" in returns.columns:
+        returns = returns.set_index("date")
+
+    aligned_returns = returns.loc[returns.index.intersection(regimes.index)]
+    aligned_states = regimes.loc[aligned_returns.index, "state"]
+
+    params: dict[int, dict[str, np.ndarray]] = {}  # Initialise le dictionnaire qui stockera, pour chaque régime (state), les paramètres estimés (mu, sigma).
+    for state in sorted(aligned_states.dropna().unique()):  # Parcourt chaque régime unique non-nul, trié, présent dans les états alignés.
+        state_dates = aligned_states[aligned_states == state].index  # Récupère les dates correspondant uniquement au régime courant.
+        window_returns = aligned_returns.loc[state_dates].tail(window)  # Extrait les rendements de ce régime et ne garde que les `window` dernières observations.
+        if window_returns.empty:  # Vérifie qu'il existe bien des données pour ce régime sur la fenêtre sélectionnée.
+            continue  # Saute ce régime si aucune observation n'est disponible.
+        mu = window_returns.mean().to_numpy()  # Calcule la moyenne (vecteur des espérances) des rendements sur la fenêtre.
+        sigma = window_returns.cov().to_numpy()  # Calcule la matrice de covariance des rendements sur la fenêtre.
+        params[int(state)] = {"mu": mu, "sigma": sigma}  # Enregistre les paramètres (mu, sigma) pour ce régime dans le dictionnaire, avec une clé entière.
+
+    return params
 
 
 def simulate_paths(
@@ -89,12 +106,34 @@ def simulate_paths(
     dist: str = "gaussian",
 ) -> np.ndarray:
     # TODO: simulate MC paths (gaussian or t) and return paths array.
-    pass
+    if n_sims <= 0 or horizon <= 0:
+        raise ValueError("n_sims and horizon must be positive.")
+    if dist != "gaussian":
+        raise ValueError("Only gaussian dist is supported for now.")
+
+    mu = np.asarray(mu)
+    sigma = np.asarray(sigma)
+    n_assets = mu.shape[0]
+    paths = np.zeros((n_sims, horizon, n_assets), dtype="float64")
+    for t in range(horizon):
+        paths[:, t, :] = np.random.multivariate_normal(mu, sigma, size=n_sims)
+    return paths
 
 
 def summarize_paths(paths: np.ndarray, alpha: float = 0.05) -> dict[str, float]:
     # TODO: compute VaR/CVaR/quantiles/probabilities from paths.
-    pass
+    if paths is None or len(paths) == 0:
+        raise ValueError("paths is empty.")
+    arr = np.asarray(paths)
+    if arr.ndim == 1:
+        pnl = arr
+    else:
+        pnl = np.nansum(arr, axis=tuple(range(1, arr.ndim)))
+    pnl = np.asarray(pnl, dtype="float64")
+    var = np.nanquantile(pnl, alpha)
+    cvar = np.nanmean(pnl[pnl <= var]) if np.any(pnl <= var) else np.nan
+    q95 = np.nanquantile(pnl, 0.95)
+    return {"var": float(var), "cvar": float(cvar), "q95": float(q95)}
 
 
 def build_mc_outputs(
@@ -136,7 +175,7 @@ def write_mc_dataset(
     partitioning = ds.partitioning(pa.schema(schema), flavor="hive")
     if existing_data_behavior == "overwrite":
         existing_data_behavior = "delete_matching"
-        ds.write_dataset(
+    ds.write_dataset(
         table,
         base_dir=str(base_dir),
         format="parquet",
