@@ -18,6 +18,7 @@ REGIMES_DIR = ROOT / "data/parquet/regimes"
 DB_PATH = ROOT / "data/_meta.db"
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 CONFIG_PATH = ROOT / "config/mc.yaml"
+MC_DIR = ROOT / "data/parquet/mc"
 
 try:
     import yaml  # type: ignore
@@ -108,8 +109,34 @@ def write_mc_dataset(
     existing_data_behavior: str = "overwrite_or_ignore",
     basename_template: str | None = None,
 ) -> None:
-    # TODO: write output to data/parquet/mc (hive).
-    pass
+    if df is None or df.empty:
+        return
+    base_dir.mkdir(parents=True, exist_ok=True)
+    if "year" not in df.columns and "date" in df.columns:
+        dt = pd.to_datetime(df["date"], errors="coerce")
+        ok = dt.notna()
+        df = df.loc[ok].copy()
+        df["year"] = dt.loc[ok].dt.year.astype("int32")
+    table = pa.Table.from_pandas(df, preserve_index=False)
+    schema = []
+    for col in partition_cols:
+        if col not in df.columns:
+            raise KeyError(f"Missing partition column: {col}")
+        if col == "year":
+            schema.append((col, pa.int32()))
+        else:
+            schema.append((col, pa.string()))
+    partitioning = ds.partitioning(pa.schema(schema), flavor="hive")
+    if existing_data_behavior == "overwrite":
+        existing_data_behavior = "delete_matching"
+        ds.write_dataset(
+        table,
+        base_dir=str(base_dir),
+        format="parquet",
+        partitioning=partitioning,
+        existing_data_behavior=existing_data_behavior,
+        basename_template=basename_template,
+    )
 
 
 def run_mc_pipeline(existing_data_behavior: str = "overwrite_or_ignore") -> None:
