@@ -26,13 +26,19 @@ except Exception:  # pragma: no cover
 
 
 def load_regimes() -> pd.DataFrame:
-    # TODO: read data/parquet/regimes (hive) and parse date.
-    pass
+    dataset_regime = ds.dataset(str(REGIMES_DIR), format="parquet", partitioning="hive")
+    df_regime = dataset_regime.to_table().to_pandas()
+    if "date" in df_regime.columns:
+        df_regime["date"] = pd.to_datetime(df_regime["date"], errors="coerce")
+    return df_regime
 
 
 def load_asset_features() -> pd.DataFrame:
-    # TODO: read data/parquet/features/assets (hive) and parse date.
-    pass
+    dataset_assets = ds.dataset(str(FEATURES_ASSETS_DIR), format="parquet", partitioning="hive")
+    df_assets = dataset_assets.to_table().to_pandas()
+    if "date" in df_assets.columns:
+        df_assets["date"] = pd.to_datetime(df_assets["date"], errors="coerce")
+    return df_assets
 
 
 def load_mc_config() -> dict[str, Any]:
