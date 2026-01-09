@@ -71,7 +71,14 @@ def calibrate_regime_params(
     window: int,
 ) -> dict[int, dict[str, np.ndarray]]:
     # TODO: estimate mu/Sigma per regime on rolling window.
-    pass
+    span = len(regimes)
+    mu = returns.rolling(regimes.rolling(window)).mean()
+    sigma = ""
+
+    out = pd.DataFrame(index=mu.index)
+    out["mu"] = mu
+    out["sigma"] = sigma
+    return out
 
 
 def simulate_paths(
