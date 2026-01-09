@@ -42,8 +42,16 @@ def load_asset_features() -> pd.DataFrame:
 
 
 def load_mc_config() -> dict[str, Any]:
-    # TODO: load config/mc.yaml (nb_sims, horizons, dist, window).
-    pass
+    if not CONFIG_PATH.exists():
+        return {}
+    content = CONFIG_PATH.read_text().strip()
+    if not content:
+        return {}
+    if yaml is None:
+        raise ImportError("PyYAML is required to parse config/regimes.yaml.")
+    data = yaml.safe_load(content)
+    return data if isinstance(data, dict) else {}
+
 
 
 def select_universe(df_assets: pd.DataFrame, tickers: list[str] | None = None) -> pd.DataFrame:
