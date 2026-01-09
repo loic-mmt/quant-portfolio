@@ -25,24 +25,79 @@ except Exception:  # pragma: no cover
     yaml = None
 
 
-def load_regime() -> pd.DataFrame:
-    dataset_regime = ds.dataset(str(REGIMES_DIR), format="parquet", partitioning="hive")
-    df_regime = dataset_regime.to_table().to_pandas()
-    if "date" in df_regime.columns:
-        df_regime["date"] = pd.to_datetime(df_regime["date"], errors="coerce")
-    return df_regime
+def load_regimes() -> pd.DataFrame:
+    # TODO: read data/parquet/regimes (hive) and parse date.
+    pass
 
 
-def load_assets_features() -> pd.DataFrame:
-    dataset_assets = ds.dataset(str(FEATURES_ASSETS_DIR), format="parquet", partitioning="hive")
-    df_assets = dataset_assets.to_table().to_pandas()
-    if "date" in df_assets.columns:
-        df_assets["date"] = pd.to_datetime(df_assets["date"], errors="coerce")
-    return df_assets
+def load_asset_features() -> pd.DataFrame:
+    # TODO: read data/parquet/features/assets (hive) and parse date.
+    pass
 
 
-def EstimProbaX():
-    L=[]
-    for i in range(10000):
-        L.append(SimulX())
-    return L.count(4)/10000
+def load_mc_config() -> dict[str, Any]:
+    # TODO: load config/mc.yaml (nb_sims, horizons, dist, window).
+    pass
+
+
+def select_universe(df_assets: pd.DataFrame, tickers: list[str] | None = None) -> pd.DataFrame:
+    # TODO: filter asset features to a stable universe.
+    pass
+
+
+def build_returns_matrix(df_assets: pd.DataFrame) -> pd.DataFrame:
+    # TODO: pivot to date x ticker returns (log-returns).
+    pass
+
+
+def calibrate_regime_params(
+    returns: pd.DataFrame,
+    regimes: pd.DataFrame,
+    window: int,
+) -> dict[int, dict[str, np.ndarray]]:
+    # TODO: estimate mu/Sigma per regime on rolling window.
+    pass
+
+
+def simulate_paths(
+    mu: np.ndarray,
+    sigma: np.ndarray,
+    n_sims: int,
+    horizon: int,
+    dist: str = "gaussian",
+) -> np.ndarray:
+    # TODO: simulate MC paths (gaussian or t) and return paths array.
+    pass
+
+
+def summarize_paths(paths: np.ndarray, alpha: float = 0.05) -> dict[str, float]:
+    # TODO: compute VaR/CVaR/quantiles/probabilities from paths.
+    pass
+
+
+def build_mc_outputs(
+    returns: pd.DataFrame,
+    regimes: pd.DataFrame,
+    params: dict[int, dict[str, np.ndarray]],
+    n_sims: int,
+    horizons: list[int],
+    dist: str,
+) -> pd.DataFrame:
+    # TODO: loop over dates and horizons; assemble summary rows.
+    pass
+
+
+def write_mc_dataset(
+    df: pd.DataFrame,
+    base_dir: Path,
+    partition_cols: list[str],
+    existing_data_behavior: str = "overwrite_or_ignore",
+    basename_template: str | None = None,
+) -> None:
+    # TODO: write output to data/parquet/mc (hive).
+    pass
+
+
+def run_mc_pipeline(existing_data_behavior: str = "overwrite_or_ignore") -> None:
+    # TODO: wire all steps: load -> align -> calibrate -> simulate -> summarize -> write.
+    pass
