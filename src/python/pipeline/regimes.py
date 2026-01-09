@@ -208,6 +208,8 @@ def write_regimes_dataset(
         else:
             schema.append((col, pa.string()))
     partitioning = ds.partitioning(pa.schema(schema), flavor="hive")
+    if existing_data_behavior == "overwrite":
+        existing_data_behavior = "delete_matching"
     ds.write_dataset(
         table,
         base_dir=str(base_dir),
@@ -226,16 +228,19 @@ def run_regime_pipeline(existing_data_behavior: str = "overwrite_or_ignore") -> 
     last_regime = get_last_regime_date(conn, "regime", "__MARKET__")
     lookback_days = 260
 
+    print(f'\nLoading Features...')
     df_regimes = load_regime_features()
     if "date" in df_regimes.columns and not full_recompute and last_regime:
         cutoff = pd.to_datetime(last_regime) - pd.Timedelta(days=lookback_days)
         df_regimes = df_regimes[df_regimes["date"] >= cutoff]
 
+    print(f'\nLoading regime configuration...')
     cfg = load_regime_config()
     regime_cols = cfg.get("regime_features")
     if not isinstance(regime_cols, list) or not regime_cols:
         regime_cols = [c for c in df_regimes.columns if c not in {"date", "year"}]
 
+    print(f'\Standardizing features...')
     X_regime = select_regime_features(df_regimes, regime_cols)
     X_regime_z, _, _ = standardize_train_apply_all(X_regime, cfg.get("train_end", "2024-01-01"))
 
@@ -244,6 +249,7 @@ def run_regime_pipeline(existing_data_behavior: str = "overwrite_or_ignore") -> 
         raise KeyError("mom_mkt_20 column is required for market returns.")
     mkt_returns = mkt_returns.dropna()
 
+    print(f'\Computing regimes...')
     _, hmm_features = fit_regime_model(X_regime_z, mkt_returns)
     outputs = build_regime_outputs(hmm_features, X_regime_z)
     outputs = outputs.reset_index().rename(columns={"index": "date"})
@@ -258,7 +264,13 @@ def run_regime_pipeline(existing_data_behavior: str = "overwrite_or_ignore") -> 
 
     if full_recompute and REGIMES_DIR.exists():
         shutil.rmtree(REGIMES_DIR)
+    
+    print("outputs shape:", outputs.shape)
+    print(outputs.head(3))
+    print(outputs.dtypes)
 
+
+    print(f'\Writing regimes...')
     suffix = str(int(time.time()))
     basename_template = f"regimes_{suffix}_{{i}}.parquet" if not full_recompute else None
     write_regimes_dataset(
@@ -269,6 +281,7 @@ def run_regime_pipeline(existing_data_behavior: str = "overwrite_or_ignore") -> 
         basename_template=basename_template,
     )
     conn.close()
+    print(f'\Done.')
 
 if __name__ == "__main__":
     import argparse
