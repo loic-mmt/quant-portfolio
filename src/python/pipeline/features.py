@@ -10,7 +10,11 @@ import time
 from scipy.stats import skew, kurtosis
 
 
-out_dir = Path("data/parquet/features")
+ROOT = Path(__file__).resolve().parents[3]
+DATA_DIR = ROOT / "data"
+
+
+out_dir = DATA_DIR / "parquet/features"
 CLEAN_PARQUET = False  # set True only if you want to reset the dataset
 if CLEAN_PARQUET and out_dir.exists():
     shutil.rmtree(out_dir)
@@ -18,7 +22,7 @@ out_dir.mkdir(parents=True, exist_ok=True)
 
 REGIME_DIR = out_dir / "regime"
 ASSET_DIR = out_dir / "assets"
-DB_PATH = Path("data/_meta.db")
+DB_PATH = DATA_DIR / "_meta.db"
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
@@ -33,7 +37,7 @@ def compute_returns(df):
 
 
 
-prices = Path("data/parquet/prices")
+prices = DATA_DIR / "parquet/prices"
 def momentum(df, batch: str = "all"):
     batch_params = {
         "20 jours": 20,
@@ -375,6 +379,14 @@ def asset_features(df: pd.DataFrame, tickers: list[str] | None = None):
                 "mom_252": "mom_i_252",
             }
         )
+        slope = trend_slope_60(g).rename("trend_slope_i_60")
+        dist, _ = dist_ma(g)
+        dist = dist.rename(
+            columns={
+                "dist_ma_50": "dist_ma_i_50",
+                "dist_ma_200": "dist_ma_i_200",
+            }
+        )
         vol = volatility(g).rename(
             columns={
                 "vol_20": "vol_i_20",
@@ -387,6 +399,12 @@ def asset_features(df: pd.DataFrame, tickers: list[str] | None = None):
             columns={
                 "dd_60": "dd_i_60",
                 "mdd_252": "mdd_i_252",
+            }
+        )
+        asym = asymetry(g).rename(
+            columns={
+                "skew_60": "skew_i_60",
+                "kurt_60": "kurt_i_60",
             }
         )
 
@@ -409,7 +427,7 @@ def asset_features(df: pd.DataFrame, tickers: list[str] | None = None):
             liq = pd.DataFrame(index=g.index)
 
         feat = pd.concat(
-            [mom, vol, dd, downside_vol, beta_idio, liq],
+            [mom, slope, dist, vol, dd, asym, downside_vol, beta_idio, liq],
             axis=1,
         )
         feat["ticker"] = ticker
@@ -596,7 +614,7 @@ def upsert_feature_last_dates(
 
 
 def load_prices_dataset() -> pd.DataFrame:
-    dataset = ds.dataset("data/parquet/prices", format="parquet", partitioning="hive")
+    dataset = ds.dataset(str(DATA_DIR / "parquet/prices"), format="parquet", partitioning="hive")
     return dataset.to_table().to_pandas()
 
 
@@ -627,6 +645,8 @@ def write_features_dataset(
         else:
             schema.append((col, pa.string()))
     partitioning = ds.partitioning(pa.schema(schema), flavor="hive")
+    if existing_data_behavior == "overwrite":
+        existing_data_behavior = "delete_matching"
     ds.write_dataset(
         table,
         base_dir=str(base_dir),
