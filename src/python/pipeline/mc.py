@@ -14,6 +14,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[3]
 FEATURES_ASSETS_DIR = ROOT / "data/parquet/features/assets"
+PRICES_DIR = ROOT / "data/parquet/prices"
 REGIMES_DIR = ROOT / "data/parquet/regimes"
 DB_PATH = ROOT / "data/_meta.db"
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -57,12 +58,25 @@ def load_mc_config() -> dict[str, Any]:
 
 def select_universe(df_assets: pd.DataFrame, tickers: list[str] | None = None) -> pd.DataFrame:
     # TODO: filter asset features to a stable universe.
-    pass
+    if df_assets is None or df_assets.empty:
+        return pd.DataFrame(index=df_assets.index if df_assets is not None else None)
+    if tickers:
+        return df_assets[df_assets["ticker"].isin(tickers)].copy()
+    return df_assets.copy()
 
 
 def build_returns_matrix(df_assets: pd.DataFrame) -> pd.DataFrame:
     # TODO: pivot to date x ticker returns (log-returns).
-    pass
+    if df_assets is None or df_assets.empty:
+        return pd.DataFrame()
+    if "adj_close" not in df_assets.columns:
+        raise KeyError("adj_close column is required to build returns matrix.")
+    data = df_assets.copy()
+    data["date"] = pd.to_datetime(data["date"], errors="coerce")
+    data = data.dropna(subset=["date"])
+    prices = data.pivot_table(index="date", columns="ticker", values="adj_close", aggfunc="last")
+    returns = np.log(prices / prices.shift(1))
+    return returns
 
 
 def calibrate_regime_params(
@@ -143,7 +157,38 @@ def build_mc_outputs(
     dist: str,
 ) -> pd.DataFrame:
     # TODO: loop over dates and horizons; assemble summary rows.
-    pass
+    if returns is None or returns.empty:
+        return pd.DataFrame()
+    if regimes is None or regimes.empty:
+        return pd.DataFrame()
+    if "state" not in regimes.columns:
+        raise KeyError("regimes must include a 'state' column.")
+
+    regimes = regimes.copy()
+    if "date" in regimes.columns:
+        regimes["date"] = pd.to_datetime(regimes["date"], errors="coerce")
+        regimes = regimes.dropna(subset=["date"])
+        regimes = regimes.set_index("date")
+
+    rows: list[dict[str, Any]] = []
+    for date, row in regimes.iterrows():
+        state = row["state"]
+        if state not in params:
+            continue
+        mu = params[state]["mu"]
+        sigma = params[state]["sigma"]
+        for horizon in horizons:
+            paths = simulate_paths(mu, sigma, n_sims, horizon, dist=dist)
+            summary = summarize_paths(paths)
+            rows.append(
+                {
+                    "date": date,
+                    "state": int(state),
+                    "horizon": int(horizon),
+                    **summary,
+                }
+            )
+    return pd.DataFrame(rows)
 
 
 def write_mc_dataset(
@@ -185,4 +230,37 @@ def write_mc_dataset(
 
 def run_mc_pipeline(existing_data_behavior: str = "overwrite_or_ignore") -> None:
     # TODO: wire all steps: load -> align -> calibrate -> simulate -> summarize -> write.
-    pass
+    cfg = load_mc_config()
+    n_sims = int(cfg.get("n_sims", 2000))
+    horizons = [int(h) for h in cfg.get("horizons", [5, 20])]
+    window = int(cfg.get("window", 252))
+    dist = str(cfg.get("dist", "gaussian"))
+    tickers = cfg.get("tickers")
+
+    regimes = load_regimes()
+    if regimes.empty:
+        raise ValueError("No regimes data available.")
+
+    prices_ds = ds.dataset(str(PRICES_DIR), format="parquet", partitioning="hive")
+    prices = prices_ds.to_table().to_pandas()
+    prices = select_universe(prices, tickers)
+
+    returns = build_returns_matrix(prices)
+    if returns.empty:
+        raise ValueError("No returns matrix available.")
+
+    params = calibrate_regime_params(returns, regimes, window=window)
+    outputs = build_mc_outputs(returns, regimes, params, n_sims, horizons, dist)
+
+    if outputs.empty:
+        return
+
+    suffix = str(int(time.time()))
+    basename_template = f"mc_{suffix}_{{i}}.parquet"
+    write_mc_dataset(
+        outputs,
+        MC_DIR,
+        partition_cols=["year"],
+        existing_data_behavior=existing_data_behavior,
+        basename_template=basename_template,
+    )
