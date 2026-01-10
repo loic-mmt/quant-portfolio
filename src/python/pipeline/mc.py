@@ -226,7 +226,7 @@ def write_mc_dataset(
 
 
 def run_mc_pipeline(existing_data_behavior: str = "overwrite_or_ignore") -> None:
-    print(f'\nLoading configuration...')
+    print("\nLoading configuration...")
     cfg = load_mc_config()
     n_sims = int(cfg.get("n_sims", 2000))
     horizons = [int(h) for h in cfg.get("horizons", [5, 20])]
@@ -234,29 +234,31 @@ def run_mc_pipeline(existing_data_behavior: str = "overwrite_or_ignore") -> None
     dist = str(cfg.get("dist", "gaussian"))
     tickers = cfg.get("tickers")
 
-    print(f'\nLoading regimes...')
+    print("\nLoading regimes...")
     regimes = load_regimes()
     if regimes.empty:
         raise ValueError("No regimes data available.")
 
-    print(f'\nLoading prices...')
+    print("\nLoading prices...")
     prices_ds = ds.dataset(str(PRICES_DIR), format="parquet", partitioning="hive")
     df_prices = prices_ds.to_table().to_pandas()
     df_prices = select_universe(df_prices, tickers)
 
-    print(f'\Building returns matrix...')
+    print("\nBuilding returns matrix...")
     returns = build_returns_matrix(df_prices)
     if returns.empty:
         raise ValueError("No returns matrix available.")
 
-    print(f'\Calibrating regime parameters...')
-    params = calibrate_regime_params(returns, regimes, window=window), print(f'\Building Monte-Carlo outputs...')
+    print("\nCalibrating regime parameters...")
+    params = calibrate_regime_params(returns, regimes, window=window)
+    print("\nBuilding Monte-Carlo outputs...")
     outputs = build_mc_outputs(returns, regimes, params, n_sims, horizons, dist)
 
     if outputs.empty:
         return
 
-    suffix = str(int(time.time())), print(f'\Writing dataset...')
+    print("\nWriting dataset...")
+    suffix = str(int(time.time()))
     basename_template = f"mc_{suffix}_{{i}}.parquet"
     write_mc_dataset(
         outputs,
@@ -265,3 +267,19 @@ def run_mc_pipeline(existing_data_behavior: str = "overwrite_or_ignore") -> None
         existing_data_behavior=existing_data_behavior,
         basename_template=basename_template,
     )
+    print("\nDone.")
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Compute and write mc datasets.")
+    parser.add_argument(
+        "--existing-data-behavior",
+        default="overwrite_or_ignore",
+        choices=["overwrite_or_ignore", "overwrite", "error", "delete_matching"],
+        help="Behavior when target dataset already has data.",
+    )
+    args = parser.parse_args()
+
+    run_mc_pipeline(existing_data_behavior=args.existing_data_behavior)
