@@ -57,7 +57,6 @@ def load_mc_config() -> dict[str, Any]:
 
 
 def select_universe(df_assets: pd.DataFrame, tickers: list[str] | None = None) -> pd.DataFrame:
-    # TODO: filter asset features to a stable universe.
     if df_assets is None or df_assets.empty:
         return pd.DataFrame(index=df_assets.index if df_assets is not None else None)
     if tickers:
@@ -66,7 +65,6 @@ def select_universe(df_assets: pd.DataFrame, tickers: list[str] | None = None) -
 
 
 def build_returns_matrix(df_prices: pd.DataFrame) -> pd.DataFrame:
-    # TODO: pivot to date x ticker returns (log-returns).
     if df_prices is None or df_prices.empty:
         return pd.DataFrame()
     if "adj_close" not in df_prices.columns:
@@ -156,7 +154,6 @@ def build_mc_outputs(
     horizons: list[int],
     dist: str,
 ) -> pd.DataFrame:
-    # TODO: loop over dates and horizons; assemble summary rows.
     if returns is None or returns.empty:
         return pd.DataFrame()
     if regimes is None or regimes.empty:
@@ -229,7 +226,7 @@ def write_mc_dataset(
 
 
 def run_mc_pipeline(existing_data_behavior: str = "overwrite_or_ignore") -> None:
-    # TODO: wire all steps: load -> align -> calibrate -> simulate -> summarize -> write.
+    print(f'\nLoading configuration...')
     cfg = load_mc_config()
     n_sims = int(cfg.get("n_sims", 2000))
     horizons = [int(h) for h in cfg.get("horizons", [5, 20])]
@@ -237,25 +234,29 @@ def run_mc_pipeline(existing_data_behavior: str = "overwrite_or_ignore") -> None
     dist = str(cfg.get("dist", "gaussian"))
     tickers = cfg.get("tickers")
 
+    print(f'\nLoading regimes...')
     regimes = load_regimes()
     if regimes.empty:
         raise ValueError("No regimes data available.")
 
+    print(f'\nLoading prices...')
     prices_ds = ds.dataset(str(PRICES_DIR), format="parquet", partitioning="hive")
     df_prices = prices_ds.to_table().to_pandas()
     df_prices = select_universe(df_prices, tickers)
 
+    print(f'\Building returns matrix...')
     returns = build_returns_matrix(df_prices)
     if returns.empty:
         raise ValueError("No returns matrix available.")
 
-    params = calibrate_regime_params(returns, regimes, window=window)
+    print(f'\Calibrating regime parameters...')
+    params = calibrate_regime_params(returns, regimes, window=window), print(f'\Building Monte-Carlo outputs...')
     outputs = build_mc_outputs(returns, regimes, params, n_sims, horizons, dist)
 
     if outputs.empty:
         return
 
-    suffix = str(int(time.time()))
+    suffix = str(int(time.time())), print(f'\Writing dataset...')
     basename_template = f"mc_{suffix}_{{i}}.parquet"
     write_mc_dataset(
         outputs,
