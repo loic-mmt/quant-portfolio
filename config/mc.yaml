@@ -1,0 +1,8 @@
+n_sims: 500
+horizons:
+  - 5
+  - 20
+window: 252
+dist: gaussian
+tickers:
+  - SMCI
