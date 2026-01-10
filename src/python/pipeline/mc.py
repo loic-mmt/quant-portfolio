@@ -65,13 +65,13 @@ def select_universe(df_assets: pd.DataFrame, tickers: list[str] | None = None) -
     return df_assets.copy()
 
 
-def build_returns_matrix(df_assets: pd.DataFrame) -> pd.DataFrame:
+def build_returns_matrix(df_prices: pd.DataFrame) -> pd.DataFrame:
     # TODO: pivot to date x ticker returns (log-returns).
-    if df_assets is None or df_assets.empty:
+    if df_prices is None or df_prices.empty:
         return pd.DataFrame()
-    if "adj_close" not in df_assets.columns:
+    if "adj_close" not in df_prices.columns:
         raise KeyError("adj_close column is required to build returns matrix.")
-    data = df_assets.copy()
+    data = df_prices.copy()
     data["date"] = pd.to_datetime(data["date"], errors="coerce")
     data = data.dropna(subset=["date"])
     prices = data.pivot_table(index="date", columns="ticker", values="adj_close", aggfunc="last")
@@ -242,10 +242,10 @@ def run_mc_pipeline(existing_data_behavior: str = "overwrite_or_ignore") -> None
         raise ValueError("No regimes data available.")
 
     prices_ds = ds.dataset(str(PRICES_DIR), format="parquet", partitioning="hive")
-    prices = prices_ds.to_table().to_pandas()
-    prices = select_universe(prices, tickers)
+    df_prices = prices_ds.to_table().to_pandas()
+    df_prices = select_universe(df_prices, tickers)
 
-    returns = build_returns_matrix(prices)
+    returns = build_returns_matrix(df_prices)
     if returns.empty:
         raise ValueError("No returns matrix available.")
 
