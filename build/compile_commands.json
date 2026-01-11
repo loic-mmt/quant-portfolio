@@ -1,0 +1,14 @@
+[
+{
+  "directory": "/Users/loic/Documents/Code/quant-portfolio/build",
+  "command": "/usr/bin/c++ -I/Users/loic/Documents/Code/quant-portfolio/src/cpp/include -isystem /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/c++/v1 -g -std=gnu++17 -arch arm64 -isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk -stdlib=libc++ -o CMakeFiles/quant_core.dir/src/mc_engine.cpp.o -c /Users/loic/Documents/Code/quant-portfolio/src/cpp/src/mc_engine.cpp",
+  "file": "/Users/loic/Documents/Code/quant-portfolio/src/cpp/src/mc_engine.cpp",
+  "output": "/Users/loic/Documents/Code/quant-portfolio/build/CMakeFiles/quant_core.dir/src/mc_engine.cpp.o"
+},
+{
+  "directory": "/Users/loic/Documents/Code/quant-portfolio/build",
+  "command": "/usr/bin/c++ -Dquant_py_EXPORTS -I/Library/Frameworks/Python.framework/Versions/3.10/include/python3.10 -I/Users/loic/Documents/Code/quant-portfolio/.venv/lib/python3.10/site-packages/pybind11/include -I/Users/loic/Documents/Code/quant-portfolio/src/cpp/include -isystem /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/c++/v1 -g -std=gnu++17 -arch arm64 -isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk -fPIC -stdlib=libc++ -o CMakeFiles/quant_py.dir/bindings/pybind_module.cpp.o -c /Users/loic/Documents/Code/quant-portfolio/src/cpp/bindings/pybind_module.cpp",
+  "file": "/Users/loic/Documents/Code/quant-portfolio/src/cpp/bindings/pybind_module.cpp",
+  "output": "/Users/loic/Documents/Code/quant-portfolio/build/CMakeFiles/quant_py.dir/bindings/pybind_module.cpp.o"
+}
+]

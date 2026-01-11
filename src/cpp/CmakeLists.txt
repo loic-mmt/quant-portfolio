@@ -1,0 +1,73 @@
+cmake_minimum_required(VERSION 3.20)
+project(quant_portfolio LANGUAGES CXX)
+
+# --- Build settings ---
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+# --- macOS toolchain guard (fixes cases where libc++ headers like <vector> are not found) ---
+if(APPLE)
+  # Use the active macOS SDK from Command Line Tools / Xcode.
+  execute_process(
+    COMMAND xcrun --show-sdk-path
+    OUTPUT_VARIABLE MACOS_SDK
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+  )
+  if(MACOS_SDK)
+    set(CMAKE_OSX_SYSROOT "${MACOS_SDK}" CACHE PATH "macOS SDK" FORCE)
+  endif()
+
+  # Ensure libc++ headers are visible even if the driver include search path is mis-detected.
+  include_directories(SYSTEM
+    "/Library/Developer/CommandLineTools/usr/include/c++/v1"
+    "${CMAKE_OSX_SYSROOT}/usr/include/c++/v1"
+  )
+
+  add_compile_options("-stdlib=libc++")
+  add_link_options("-stdlib=libc++")
+endif()
+
+# --- Paths (adapt if you change Python/venv) ---
+set(PYTHON_INCLUDE_DIR "/Library/Frameworks/Python.framework/Versions/3.10/include/python3.10")
+set(PYBIND11_INCLUDE_DIR "/Users/loic/Documents/Code/quant-portfolio/.venv/lib/python3.10/site-packages/pybind11/include")
+
+# --- Core C++ library ---
+add_library(quant_core
+  src/mc_engine.cpp
+)
+
+target_include_directories(quant_core
+  PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+# --- Python bindings (pybind11) ---
+# We build a Python extension module.
+add_library(quant_py MODULE
+  bindings/pybind_module.cpp
+)
+
+# On macOS, Python extensions typically use this prefix/suffix.
+set_target_properties(quant_py PROPERTIES
+  PREFIX ""
+)
+
+# Make sure the compiler can see Python + pybind11 headers.
+target_include_directories(quant_py
+  PRIVATE
+    ${PYTHON_INCLUDE_DIR}
+    ${PYBIND11_INCLUDE_DIR}
+)
+
+# Link the core library into the module.
+target_link_libraries(quant_py
+  PRIVATE
+    quant_core
+)
+
+# Allow resolving Python symbols at runtime without explicitly linking libpython.
+if(APPLE)
+  target_link_options(quant_py PRIVATE "-undefined" "dynamic_lookup")
+endif()

@@ -1,0 +1,4 @@
+/Users/loic/Documents/Code/quant-portfolio/build/CMakeFiles/quant_core.dir
+/Users/loic/Documents/Code/quant-portfolio/build/CMakeFiles/quant_py.dir
+/Users/loic/Documents/Code/quant-portfolio/build/CMakeFiles/edit_cache.dir
+/Users/loic/Documents/Code/quant-portfolio/build/CMakeFiles/rebuild_cache.dir
