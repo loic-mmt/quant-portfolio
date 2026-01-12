@@ -1,4 +1,4 @@
-# Regime-Aware Dynamic Equity Portfolio (Python + C++ + SQL cache)
+# Regime-Aware Dynamic Equity Portfolio (Python + C++ + SQL cache + Parquet)
 
 Un système quant, reproductible, et orienté “risk-first” pour gérer un portefeuille **long-only** de **40–50 actions** sur une période cible d’**1 an** (01/01 → 31/12), avec une allocation qui **s’adapte aux régimes de marché** et un **contrôle du risque** au quotidien.
 
@@ -7,7 +7,7 @@ L’objectif n’est pas de “prédire le futur” au sens naïf. L’objectif 
 ---
 
 ## Table of Contents
-- [Regime-Aware Dynamic Equity Portfolio (Python + C++ + SQL cache)](#regime-aware-dynamic-equity-portfolio-python--c--sql-cache)
+- [Regime-Aware Dynamic Equity Portfolio (Python + C++ + SQL cache + Parquet)](#regime-aware-dynamic-equity-portfolio-python--c--sql-cache--parquet)
   - [Table of Contents](#table-of-contents)
   - [Key Ideas](#key-ideas)
   - [Project Goals](#project-goals)
