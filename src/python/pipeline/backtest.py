@@ -19,7 +19,12 @@ WEIGHTS_DIR = DATA_DIR / "parquet/weights"
 BACKTEST_DIR = DATA_DIR / "parquet/backtests"
 DB_PATH = DATA_DIR / "_meta.db"
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+CONFIG_PATH = ROOT / "config/backtest.yaml"
 
+try:
+    import yaml
+except Exception:
+    yaml = None
 
 @dataclass
 class BacktestConfig:
@@ -35,7 +40,18 @@ def load_backtest_config() -> BacktestConfig:
     # TODO: provide defaults if file missing
     # TODO: validate required fields and types
     # TODO: return BacktestConfig dataclass
-    raise NotImplementedError
+
+    if not CONFIG_PATH.exists():
+        return {}
+    content = CONFIG_PATH.read_text().strip()
+    if not content:
+        return {}
+    if yaml is None:
+        raise ImportError("PyYAML is required to parse config/backtest.yaml.")
+    data = yaml.safe_load(content)
+    if not data:
+        default_config = True
+    return data if isinstance(data, dict) else {}
 
 
 def load_prices_dataset(tickers: list[str] | None = None) -> pd.DataFrame:
