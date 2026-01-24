@@ -1,17 +1,3 @@
-"""
-Pipeline: regime detection
-
-TODO:
-- load data/parquet/features/regime (hive)
-- select feature columns (config/regimes.yaml)
-- split train/validation by date
-- standardize (z-score on train only, apply to full)
-- fit model(s) via src/python/models/hmm.py
-- produce state + probabilities per date
-- write outputs to data/parquet/regimes (hive partitioned by year)
-- store last processed date in SQLite (optional, like features.py)
-"""
-
 from __future__ import annotations
 
 from pathlib import Path
