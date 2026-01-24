@@ -44,11 +44,6 @@ DEFAULT_CFG = BacktestConfig(
 
 
 def load_backtest_config() -> BacktestConfig:
-    # TODO: load config/backtest.yaml
-    # TODO: provide defaults if file missing
-    # TODO: validate required fields and types
-    # TODO: return BacktestConfig dataclass
-
     if not CONFIG_PATH.exists():
         return DEFAULT_CFG
     
@@ -82,10 +77,6 @@ def load_backtest_config() -> BacktestConfig:
 
 
 def load_prices_dataset(tickers: list[str] | None = None) -> pd.DataFrame:
-    # TODO: read parquet dataset from PRICES_DIR (hive)
-    # TODO: optionally filter by tickers
-    # TODO: parse date column to datetime
-    # TODO: return tidy frame with date, ticker, adj_close
     dataset = ds.dataset(str(PRICES_DIR), format="parquet", partitioning="hive")
 
     if tickers:
@@ -98,6 +89,7 @@ def load_prices_dataset(tickers: list[str] | None = None) -> pd.DataFrame:
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
 
     df = df.dropna(subset=["date", "ticker", "adj_close"]).sort_values(["date","ticker"])
+    return df
 
 
 
