@@ -85,6 +85,7 @@ def load_prices_dataset(tickers: list[str] | None = None) -> pd.DataFrame:
         table = dataset.to_table(filter = filt, columns=["date", "ticker", "adj_close"])
     else:
         table = dataset.to_table(columns = ["date", "ticker", "adj_close"])
+    
     df = table.to_pandas()
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
 
@@ -94,11 +95,17 @@ def load_prices_dataset(tickers: list[str] | None = None) -> pd.DataFrame:
 
 
 def load_target_weights(run_id: str | None = None) -> pd.DataFrame:
-    # TODO: read weights dataset from WEIGHTS_DIR (hive)
-    # TODO: optionally filter by run_id or latest
-    # TODO: ensure date is datetime and weights sum per date
-    # TODO: return tidy frame with date, ticker, weight
-    raise NotImplementedError
+    dataset = ds.dataset(str(WEIGHTS_DIR), format="parquet", partitioning="hive")
+    if run_id:
+        run_id = int(run_id)
+        filt = ds.field(f"{run_id}").isin(run_id)
+        table = dataset.to_table(filter = filt, columns=["date", "ticker", "weight"])
+    else:
+        table = dataset.to_table(columns = ["date", "ticker", "weight"])
+    df = table.to_pandas()
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    df = df.dropna(subset=["date", "ticker", "weight"]).sort_values(["date", "ticker"])
+    return df
 
 
 def build_returns_matrix(prices: pd.DataFrame) -> pd.DataFrame:
@@ -106,7 +113,9 @@ def build_returns_matrix(prices: pd.DataFrame) -> pd.DataFrame:
     # TODO: compute log or simple returns
     # TODO: drop rows with all NaN
     # TODO: return returns matrix
-    raise NotImplementedError
+    
+
+    return 
 
 
 def build_rebalance_dates(index: pd.DatetimeIndex, freq: str) -> pd.DatetimeIndex:
