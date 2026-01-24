@@ -86,7 +86,19 @@ def load_prices_dataset(tickers: list[str] | None = None) -> pd.DataFrame:
     # TODO: optionally filter by tickers
     # TODO: parse date column to datetime
     # TODO: return tidy frame with date, ticker, adj_close
-    raise NotImplementedError
+    dataset = ds.dataset(str(PRICES_DIR), format="parquet", partitioning="hive")
+
+    if tickers:
+        tickers = [t.upper().strip() for t in tickers]
+        filt = ds.field("ticker").isin(tickers)
+        table = dataset.to_table(filter = filt, columns=["date", "ticker", "adj_close"])
+    else:
+        table = dataset.to_table(columns = ["date", "ticker", "adj_close"])
+    df = table.to_pandas()
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+
+    df = df.dropna(subset=["date", "ticker", "adj_close"]).sort_values(["date","ticker"])
+
 
 
 def load_target_weights(run_id: str | None = None) -> pd.DataFrame:
