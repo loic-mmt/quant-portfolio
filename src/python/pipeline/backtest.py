@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +34,14 @@ class BacktestConfig:
     turnover_cap: float | None
     initial_capital: float
 
+DEFAULT_CFG = BacktestConfig(
+    rebal_freq="W",
+    transaction_bps= 1.0,
+    slippage_bps=2.0,
+    turnover_cap=None,
+    initial_capital=100_000.0
+)
+
 
 def load_backtest_config() -> BacktestConfig:
     # TODO: load config/backtest.yaml
@@ -42,16 +50,35 @@ def load_backtest_config() -> BacktestConfig:
     # TODO: return BacktestConfig dataclass
 
     if not CONFIG_PATH.exists():
-        return {}
+        return DEFAULT_CFG
+    
     content = CONFIG_PATH.read_text().strip()
     if not content:
-        return {}
+        return DEFAULT_CFG
+    
     if yaml is None:
         raise ImportError("PyYAML is required to parse config/backtest.yaml.")
+    
     data = yaml.safe_load(content)
-    if not data:
-        default_config = True
-    return data if isinstance(data, dict) else {}
+
+    # YAML doit être un dict
+    if not isinstance(data, dict):
+        raise ValueError("backtest.yaml must contain a YAML mapping (dict).")
+    
+    # champs autorisés
+    allowed = {f.name for f in fields(BacktestConfig)}
+    unknown = set(data.keys()) - allowed
+    if unknown:
+        raise ValueError(f"Unknown fields in backtest.yaml: {sorted(unknown)}")
+    
+    merged = {**DEFAULT_CFG.__dict__, **data}
+    cfg = BacktestConfig(**merged)
+
+    if cfg.initial_capital <= 0:
+        raise ValueError("initial_capital must be > 0")
+    if cfg.transaction_bps < 0 or cfg.slippage_bps < 0:
+        raise ValueError("transaction_bps and slippage_bps must be >= 0")
+    return cfg
 
 
 def load_prices_dataset(tickers: list[str] | None = None) -> pd.DataFrame:
