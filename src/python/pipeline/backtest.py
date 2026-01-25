@@ -214,9 +214,13 @@ def align_weights_to_dates(
 
 
 def compute_turnover(prev_w: np.ndarray, next_w: np.ndarray) -> float:
-    # TODO: compute 0.5 * sum(|delta|)
-    # TODO: return turnover scalar
-    raise NotImplementedError
+    prev_w = np.array(prev_w, dtype=float)
+    next_w = np.array(next_w, dtype=float)
+
+    if prev_w.shape != next_w.shape:
+        raise ValueError(f"Shape mismatch: prev_w {prev_w.shape} vs next_w {next_w.shape}")
+    turnover = 0.5 * np.sum(np.abs(next_w - prev_w))
+    return float(turnover)
 
 
 def apply_turnover_cap(
