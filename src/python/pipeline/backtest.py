@@ -186,23 +186,26 @@ def align_weights_to_dates(
     # TODO: reindex to full ticker list, fill missing with 0
     # TODO: normalize to sum to 1 (or <=1 if cash)
     # TODO: return weights matrix indexed by rebal_dates
-
-    for r in rebal_dates.values:
-        weight_idx = target_weights.find(r)
-        total_weight = sum(target_weights["weights"])
-        if total_weight > 1 :
-            normalizer = 1 / (total_weight)
-            normalized = target_weights["weights"] * normalizer
+    if target_weights is None or target_weights.empty:
+        raise ValueError("target_weights is empty")
     
-    if not normalized :
-        out = pd.DataFrame(index=rebal_dates)
-        out["ticker"] = tickers
-        out["weight"] = weight_idx
-    else :
-        out = pd.DataFrame(index=rebal_dates)
-        out["ticker"] = tickers
-        out["weight"] = normalized.where(normalized["ticker"]==target_weights["ticker"])
-    return out
+    required = {"date", "ticker", "weight"}
+    if not required.issubset(target_weights.columns):
+        missing = ", ".join(sorted(required - set(target_weights.columns)))
+        raise KeyError(f"Missing required columns: {missing}")
+    
+    tw = target_weights.copy()
+    tw["date"] = pd.to_datetime(tw["date"], errors= "coerce")
+    tw = tw.dropna(subset=["date", "ticker", "weight"])
+    tw = tw.sort_values(["date", "ticker"])
+
+    # pivot weights : date x ticker
+    W = tw.pivot_table(index="date", columns="ticker", values="weight", aggfunc="last").sort_index()
+    W = W.reindex(columns=tickers).fillna(0.0)
+    W = W.reindex(pd.DatetimeIndex(rebal_dates).sort_values(), method="ffill").fillna(0.0)
+
+    # normalisation
+    return
 
 
     
