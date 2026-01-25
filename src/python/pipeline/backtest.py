@@ -329,43 +329,18 @@ def simulate_portfolio(
 
 
 def summarize_performance(results: pd.DataFrame) -> dict[str, float]:
-    # TODO: compute CAGR, Sharpe, max drawdown, vol, turnover stats
-    # TODO: return summary dict for report/logging
-    trade_year = 252
-    V_0 = results["portfolio_value"].loc[0]
-    V_1 = results["portfolio_value"].loc[trade_year]
-    V_2 = results["portfolio_value"].loc[trade_year * 2]
-    V_3 = results["portfolio_value"].loc[trade_year * 3]
+    if results is None or results.empty:
+        raise ValueError("results is empty")
+    
+    required = {"portfolio_value", "portfolio_return", "turnover"}
+    missing = required - set(results.columns)
+    if missing:
+        raise KeyError(f"Missing required columns: {sorted(missing)}")
+    
+    trading_days = 252
+    n = len(results)
+    years = n / trading_days
 
-    volatility = results["portfolio_return"].std() * np.sqrt(trade_year)
-
-    mdd = 0
-    peak = results["portfolio_value"].loc[0]
-    for x in results["portfolio_value"].values:
-        if x > peak:
-            peak = x
-        dd = (peak - x) / peak
-        if dd > mdd:
-            mdd = dd
-
-    volatility = results["portfolio_return"].std() * np.sqrt(trade_year)
-    CAGR = (V_1/V_0)**1/1 -1
-    Sharpe = ((results["portfolio_return"].mean()*trade_year)- 0.05) / volatility
-    max_drawdown = mdd
-    turnover_annualise = results["turnover"] / trade_year
-    turnover_mean = results["turnover"].mean()
-    turnover_vol = results["turnover"].std()
-
-    summary =  {
-            "volatility": volatility,
-            "CAGR": CAGR,
-            "Sharpe": Sharpe,
-            "max_drawdown": max_drawdown,
-            "turnover_annualise": turnover_annualise,
-            "turnover_mean": turnover_mean,
-            "turnover_vol": turnover_vol,
-        },
-    return summary
 
 
 def write_backtest_outputs(
