@@ -269,7 +269,11 @@ def simulate_portfolio(
     # TODO: apply turnover cap and transaction costs at rebalance
     # TODO: track daily portfolio value, pnl, turnover, costs
     # TODO: return daily results dataframe
-    raise NotImplementedError
+    rebalance_dates = build_rebalance_dates(returns.index, freq=cfg.rebal_freq)
+    weights_to_dates = align_weights_to_dates(target_weights, rebalance_dates, (t for t in returns["ticker"]))
+    for d in returns.index:
+
+    
 
 
 def summarize_performance(results: pd.DataFrame) -> dict[str, float]:
