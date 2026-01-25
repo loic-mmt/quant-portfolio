@@ -107,14 +107,24 @@ def load_target_weights(run_id: str | None = None) -> pd.DataFrame:
     return df
 
 
-def build_returns_matrix(prices: pd.DataFrame) -> pd.DataFrame:
+def build_returns_matrix(df: pd.DataFrame) -> pd.DataFrame:
     # TODO: pivot prices to date x ticker
     # TODO: compute log or simple returns
     # TODO: drop rows with all NaN
     # TODO: return returns matrix
+    if df is None or df.empty:
+        raise ValueError("Prices data are empty.")
+    required = {"date", "ticker", "adj_close"}
+    if not required.issubset(df.columns):
+        missing = ", ".join(sorted(required - set(df.columns)))
+        raise KeyError(f"Missing required columns: {missing}")
+    data = df.copy()
+    data["date"] = pd.to_datetime(data["date"], errors="coerce")
+    data = data.dropna(subset=["date"])
+    prices = (data.pivot_table(index="date", columns="ticker", values="adj_close", aggfunc="last").sort_index())
+    returns = np.log(prices / prices.shift())
 
-
-    return 
+    return returns, prices
 
 
 def build_rebalance_dates(index: pd.DatetimeIndex, freq: str) -> pd.DatetimeIndex:
