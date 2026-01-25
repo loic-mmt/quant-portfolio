@@ -297,8 +297,40 @@ def simulate_portfolio(
 
         if dt in rebal_set:
             target_w = W_target.loc[dt].to_numpy(dtype=float)
-            turnover = compute_turnover(w, target_w)
+            turnover = compute_turnover(w, target_w) # turnover vs current weight
+            capped_w = apply_turnover_cap(w, target_w, cfg.turnover_cap)
+            turnover = compute_turnover(w, capped_w)
+            cost = estimate_transaction_costs(turnover, cfg.transaction_bps, cfg.slippage_bps)
 
+            V *= (1.0 - cost)
+
+            w = capped_w
+            rebalanced = True
+        # daily portfolio return
+        r_vec = returns.loc[dt].to_numpy(dtype=float)
+        r_p = float(np.nansum(w * r_vec)) # sum of weighted returns
+
+        # update value
+        V *= (1.0 + r_p)
+
+        port_value.append(V)
+        port_ret.append(r_p)
+        turnover_list.append(turnover)
+        cost_list.append(cost)
+        is_rebal.append(rebalanced)
+    
+    results = pd.DataFrame(
+        {
+            "portfolio_value": port_value,
+            "portfolio_return": port_ret,
+            "turnover": turnover_list,
+            "cost": cost_list,
+            "is_rebalance": is_rebal,
+        },
+        index=dates
+    )
+    results["pnl"] = results["portfolio_value"] - cfg.initial_capital
+    return results
 
 
 def summarize_performance(results: pd.DataFrame) -> dict[str, float]:
