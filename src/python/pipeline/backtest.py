@@ -121,10 +121,11 @@ def build_returns_matrix(df: pd.DataFrame) -> pd.DataFrame:
     data = df.copy()
     data["date"] = pd.to_datetime(data["date"], errors="coerce")
     data = data.dropna(subset=["date"])
-    prices = (data.pivot_table(index="date", columns="ticker", values="adj_close", aggfunc="last").sort_index())
-    returns = np.log(prices / prices.shift())
 
-    return returns, prices
+    prices = (data.pivot_table(index="date", columns="ticker", values="adj_close", aggfunc="last").sort_index())
+    returns = np.log(prices / prices.shift(1))
+    returns = returns.dropna(how = "all")
+    return returns
 
 
 def build_rebalance_dates(index: pd.DatetimeIndex, freq: str) -> pd.DatetimeIndex:
@@ -185,7 +186,28 @@ def align_weights_to_dates(
     # TODO: reindex to full ticker list, fill missing with 0
     # TODO: normalize to sum to 1 (or <=1 if cash)
     # TODO: return weights matrix indexed by rebal_dates
-    raise NotImplementedError
+
+    for r in rebal_dates.values:
+        weight_idx = target_weights.find(r)
+        total_weight = sum(target_weights["weights"])
+        if total_weight > 1 :
+            normalizer = 1 / (total_weight)
+            normalized = target_weights["weights"] * normalizer
+    
+    if not normalized :
+        out = pd.DataFrame(index=rebal_dates)
+        out["ticker"] = tickers
+        out["weight"] = weight_idx
+    else :
+        out = pd.DataFrame(index=rebal_dates)
+        out["ticker"] = tickers
+        out["weight"] = normalized.where(normalized["ticker"]==target_weights["ticker"])
+    return out
+
+
+    
+
+    
 
 
 def compute_turnover(prev_w: np.ndarray, next_w: np.ndarray) -> float:
