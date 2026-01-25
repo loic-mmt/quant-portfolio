@@ -352,9 +352,20 @@ def summarize_performance(results: pd.DataFrame) -> dict[str, float]:
     CAGR = (V_1/V_0)**1/1 -1
     Sharpe = ((results["portfolio_return"].mean()*trade_year)- 0.05) / volatility
     max_drawdown = mdd
-    turnover = results["turnover"] / trade_year
+    turnover_annualise = results["turnover"] / trade_year
+    turnover_mean = results["turnover"].mean()
+    turnover_vol = results["turnover"].std()
 
-
+    summary =  {
+            "volatility": volatility,
+            "CAGR": CAGR,
+            "Sharpe": Sharpe,
+            "max_drawdown": max_drawdown,
+            "turnover_annualise": turnover_annualise,
+            "turnover_mean": turnover_mean,
+            "turnover_vol": turnover_vol,
+        },
+    return summary
 
 
 def write_backtest_outputs(
