@@ -269,11 +269,36 @@ def simulate_portfolio(
     # TODO: apply turnover cap and transaction costs at rebalance
     # TODO: track daily portfolio value, pnl, turnover, costs
     # TODO: return daily results dataframe
-    rebalance_dates = build_rebalance_dates(returns.index, freq=cfg.rebal_freq)
-    weights_to_dates = align_weights_to_dates(target_weights, rebalance_dates, (t for t in returns["ticker"]))
-    for d in returns.index:
+    if returns is None or returns.empty:
+         raise ValueError("returns is empty")
+    tickers = list(returns.columns)
+    dates = pd.DatetimeIndex(returns.index).sort_values()
 
-    
+    rebal_dates = build_rebalance_dates(dates, freq=cfg.rebal_freq)
+
+    W_target = align_weights_to_dates(target_weights, rebal_dates, tickers)
+
+    V = float(cfg.initial_capital)
+    w = W_target.iloc[0].to_numpy(dtype=float) # poids initial
+    w = w / w.sum() if w.sum() > 1.0 else w
+
+    port_value = []
+    port_ret = []
+    turnover_list = []
+    cost_list = []
+    is_rebal = []
+
+    rebal_set = set(pd.DatetimeIndex(rebal_dates))
+
+    for dt in dates :
+        turnover = 0
+        cost = 0
+        rebalanced = False
+
+        if dt in rebal_set:
+            target_w = W_target.loc[dt].to_numpy(dtype=float)
+            turnover = compute_turnover(w, target_w)
+
 
 
 def summarize_performance(results: pd.DataFrame) -> dict[str, float]:
