@@ -244,10 +244,18 @@ def apply_turnover_cap(
 
 
 def estimate_transaction_costs(turnover: float, bps: float, slippage_bps: float) -> float:
-    # TODO: convert bps to decimal
-    # TODO: compute total cost as turnover * (bps + slippage_bps)
-    # TODO: return cost scalar
-    raise NotImplementedError
+    if turnover < 0:
+        raise ValueError("turnover must be >= 0")
+    if bps < 0:
+        raise ValueError("bps must be >= 0")
+    if slippage_bps < 0:
+        raise ValueError("slippage_bps must be >= 0")
+
+    fee = bps / 10_000
+    slippage = slippage_bps / 10_000
+
+    total_cost = turnover * (fee + slippage)
+    return float(total_cost)
 
 
 def simulate_portfolio(
