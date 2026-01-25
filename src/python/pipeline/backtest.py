@@ -108,10 +108,6 @@ def load_target_weights(run_id: str | None = None) -> pd.DataFrame:
 
 
 def build_returns_matrix(df: pd.DataFrame) -> pd.DataFrame:
-    # TODO: pivot prices to date x ticker
-    # TODO: compute log or simple returns
-    # TODO: drop rows with all NaN
-    # TODO: return returns matrix
     if df is None or df.empty:
         raise ValueError("Prices data are empty.")
     required = {"date", "ticker", "adj_close"}
@@ -182,10 +178,6 @@ def align_weights_to_dates(
     rebal_dates: pd.DatetimeIndex,
     tickers: list[str],
 ) -> pd.DataFrame:
-    # TODO: for each rebal date, select latest available target weights
-    # TODO: reindex to full ticker list, fill missing with 0
-    # TODO: normalize to sum to 1 (or <=1 if cash)
-    # TODO: return weights matrix indexed by rebal_dates
     if target_weights is None or target_weights.empty:
         raise ValueError("target_weights is empty")
     
@@ -228,10 +220,31 @@ def apply_turnover_cap(
     next_w: np.ndarray,
     cap: float | None,
 ) -> np.ndarray:
-    # TODO: if no cap, return next_w
-    # TODO: if cap, scale delta to respect cap
-    # TODO: return capped weights
-    raise NotImplementedError
+    prev_w = np.asarray(prev_w, dtype=float)
+    next_w = np.asarray(next_w, dtype=float)
+
+    if prev_w.shape != next_w.shape:
+        raise ValueError(f"Shape mismatch: prev_w {prev_w.shape} vs next_w {next_w.shape}")
+
+    # No cap
+    if cap is None:
+        return next_w
+
+    if cap < 0:
+        raise ValueError("cap must be >= 0 or None")
+
+    turnover = compute_turnover(prev_w, next_w)
+
+    # Already within cap
+    if turnover <= cap:
+        return next_w
+
+    # Scale the move to match the cap
+    alpha = cap / turnover  # alpha in (0,1)
+    capped_w = prev_w + alpha * (next_w - prev_w)
+
+    return capped_w
+
 
 
 def estimate_transaction_costs(turnover: float, bps: float, slippage_bps: float) -> float:
