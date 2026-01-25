@@ -226,7 +226,6 @@ def apply_turnover_cap(
     if prev_w.shape != next_w.shape:
         raise ValueError(f"Shape mismatch: prev_w {prev_w.shape} vs next_w {next_w.shape}")
 
-    # No cap
     if cap is None:
         return next_w
 
@@ -234,12 +233,9 @@ def apply_turnover_cap(
         raise ValueError("cap must be >= 0 or None")
 
     turnover = compute_turnover(prev_w, next_w)
-
-    # Already within cap
     if turnover <= cap:
         return next_w
 
-    # Scale the move to match the cap
     alpha = cap / turnover  # alpha in (0,1)
     capped_w = prev_w + alpha * (next_w - prev_w)
 
