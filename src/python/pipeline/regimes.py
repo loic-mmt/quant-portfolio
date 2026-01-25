@@ -25,8 +25,8 @@ DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 CONFIG_PATH = ROOT / "config/regimes.yaml"
 
 try:
-    import yaml  # type: ignore
-except Exception:  # pragma: no cover
+    import yaml
+except Exception:
     yaml = None
 
 
