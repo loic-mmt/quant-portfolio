@@ -341,6 +341,17 @@ def summarize_performance(results: pd.DataFrame) -> dict[str, float]:
     n = len(results)
     years = n / trading_days
 
+    V0 = float(results["portfolio_value"].iloc[0])
+    Vend = float(results["portfolio_value"].iloc[-1])
+
+    # CAGR
+    if V0 <= 0 or years <= 0:
+        cagr = np.nan
+    else:
+        cagr = (Vend / V0) ** (1 / years) -1
+
+    # Volatility (annualisée)
+    daily_ret = results["portfolio_return"].astype(float)
 
 
 def write_backtest_outputs(
