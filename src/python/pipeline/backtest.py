@@ -205,12 +205,12 @@ def align_weights_to_dates(
     W = W.reindex(pd.DatetimeIndex(rebal_dates).sort_values(), method="ffill").fillna(0.0)
 
     # normalisation
-    return
+    total_exposure = W.sum(axis=1)
+    for dt in W.index:
+        if total_exposure.loc[dt] > 1.0 + 1e-12: # tolérance pour éviter 1.00000000002
+            W.loc[dt] =  W.loc[dt] / total_exposure.loc[dt]
 
-
-    
-
-    
+    return W
 
 
 def compute_turnover(prev_w: np.ndarray, next_w: np.ndarray) -> float:
