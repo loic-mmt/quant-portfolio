@@ -93,7 +93,6 @@ def load_prices_dataset(tickers: list[str] | None = None) -> pd.DataFrame:
     return df
 
 
-
 def load_target_weights(run_id: str | None = None) -> pd.DataFrame:
     dataset = ds.dataset(str(WEIGHTS_DIR), format="parquet", partitioning="hive")
     if run_id:
@@ -113,16 +112,28 @@ def build_returns_matrix(prices: pd.DataFrame) -> pd.DataFrame:
     # TODO: compute log or simple returns
     # TODO: drop rows with all NaN
     # TODO: return returns matrix
-    
+
 
     return 
 
 
 def build_rebalance_dates(index: pd.DatetimeIndex, freq: str) -> pd.DatetimeIndex:
-    # TODO: convert freq (e.g. "W", "2W", "M") to rebalance dates
-    # TODO: align to available trading dates
-    # TODO: return DatetimeIndex of rebal dates
-    raise NotImplementedError
+    """
+    Build rebalance dates aligned to available trading dates.
+
+    Parameters
+    ----------
+    index : pd.DatetimeIndex
+        Trading dates (must be sortable, usually business days).
+    freq : str
+        "D", "W", "2W", "M"
+
+    Returns
+    -------
+    pd.DatetimeIndex
+        Rebalance dates (subset of index).
+    """
+
 
 
 def align_weights_to_dates(
