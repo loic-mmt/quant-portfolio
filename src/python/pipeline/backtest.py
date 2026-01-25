@@ -352,6 +352,17 @@ def summarize_performance(results: pd.DataFrame) -> dict[str, float]:
 
     # Volatility (annualisée)
     daily_ret = results["portfolio_return"].astype(float)
+    vol = float(daily_ret.std(ddof=1) * np.sqrt(trading_days))
+
+    # Sharpe (rf annuel fixe)
+    rf = 0.05
+    mu_annual = float(daily_ret.mean() * trading_days)
+    sharpe = np.nan
+    if vol > 0:
+        sharpe = (mu_annual - rf) / vol
+
+    # Max Drawdown
+    
 
 
 def write_backtest_outputs(
