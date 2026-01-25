@@ -331,7 +331,30 @@ def simulate_portfolio(
 def summarize_performance(results: pd.DataFrame) -> dict[str, float]:
     # TODO: compute CAGR, Sharpe, max drawdown, vol, turnover stats
     # TODO: return summary dict for report/logging
-    raise NotImplementedError
+    trade_year = 252
+    V_0 = results["portfolio_value"].loc[0]
+    V_1 = results["portfolio_value"].loc[trade_year]
+    V_2 = results["portfolio_value"].loc[trade_year * 2]
+    V_3 = results["portfolio_value"].loc[trade_year * 3]
+
+    volatility = results["portfolio_return"].std() * np.sqrt(trade_year)
+
+    mdd = 0
+    peak = results["portfolio_value"].loc[0]
+    for x in results["portfolio_value"].values:
+        if x > peak:
+            peak = x
+        dd = (peak - x) / peak
+        if dd > mdd:
+            mdd = dd
+
+    volatility = results["portfolio_return"].std() * np.sqrt(trade_year)
+    CAGR = (V_1/V_0)**1/1 -1
+    Sharpe = ((results["portfolio_return"].mean()*trade_year)- 0.05) / volatility
+    max_drawdown = mdd
+    turnover = results["turnover"] / trade_year
+
+
 
 
 def write_backtest_outputs(
