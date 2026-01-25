@@ -263,12 +263,7 @@ def simulate_portfolio(
     target_weights: pd.DataFrame,
     cfg: BacktestConfig,
 ) -> pd.DataFrame:
-    # TODO: build rebalance schedule from returns index
-    # TODO: align target weights to rebal dates
-    # TODO: iterate over dates applying weights and returns
-    # TODO: apply turnover cap and transaction costs at rebalance
-    # TODO: track daily portfolio value, pnl, turnover, costs
-    # TODO: return daily results dataframe
+    
     if returns is None or returns.empty:
          raise ValueError("returns is empty")
     tickers = list(returns.columns)
