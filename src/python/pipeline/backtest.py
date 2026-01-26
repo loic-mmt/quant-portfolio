@@ -362,7 +362,30 @@ def summarize_performance(results: pd.DataFrame) -> dict[str, float]:
         sharpe = (mu_annual - rf) / vol
 
     # Max Drawdown
+    pv = results["portfolio_value"].astype(float)
+    running_max = pv.cummax()
+    drawdown = (pv / running_max) -1.0
+    max_drawdown = float(drawdown.min())
+    max_drawdown = abs(max_drawdown)
+
+    # Turnover
+    turnover = results["turnover"].astype(float)
+    turnover_mean = float(turnover.mean())
+    turnover_vol = float(turnover.std(ddof=1))
+
+    turnover_annualised = float(turnover.sum() / years) if years > 0 else np.nan
     
+    summary = {
+        "CAGR": float(cagr),
+        "volatility": vol,
+        "Sharpe": float(sharpe),
+        "max_drawdown": max_drawdown,
+        "turnover_annualised": turnover_annualised,
+        "turnover_mean": turnover_mean,
+        "turnover_vol": turnover_vol,
+    }
+
+    return summary
 
 
 def write_backtest_outputs(
