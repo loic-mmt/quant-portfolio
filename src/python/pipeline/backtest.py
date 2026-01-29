@@ -409,6 +409,15 @@ def init_db(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def upsert_summary(conn: sqlite3.Connection, df: pd.DataFrame):
+    if df is None or df.empty:
+        return None
+    sql = """
+    INSERT INTO backtests (tickers, date, CAGR, volatility, Sharpe, max_drawdown, turnover_annualised, turnover_mean, turnover_vol, run_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+    conn.execute(sql)
+    conn.commit()
 
 def write_backtest_outputs(
     results: pd.DataFrame,
@@ -454,26 +463,9 @@ def write_backtest_outputs(
         existing_data_behavior=existing_data_behavior,
     )
 
+    
 
-def upsert_summary(conn: sqlite3.Connection, df: pd.DataFrame):
-    if df is None or df.empty:
-        return None
-    sql = """
-    INSERT INTO backtests (tickers, date, CAGR, volatility, Sharpe, max_drawdown, turnover_annualised, turnover_mean, turnover_vol, run_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        CREATE TABLE IF NOT EXISTS backtests (
-          tickers     TEXT NOT NULL,
-          date       TEXT NOT NULL,  -- YYYY-MM-DD
-          CAGR                  REAL,
-          volatility            REAL,
-          Sharpe                REAL,
-          max_drawdown          REAL,
-          turnover_annualised   REAL,
-          turnover_mean         REAL,
-          turnover_vol          REAL,
-          run_id                PRIMARY KEY
-        );
-        """
+
 
 def run_backtest_pipeline(run_id: str | None = None) -> None:
     # TODO: load config
