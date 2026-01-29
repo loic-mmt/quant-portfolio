@@ -388,15 +388,71 @@ def summarize_performance(results: pd.DataFrame) -> dict[str, float]:
     return summary
 
 
+def init_db(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS backtests (
+          tickers     TEXT NOT NULL,
+          date       TEXT NOT NULL,  -- YYYY-MM-DD
+          CAGR                  REAL,
+          volatility            REAL,
+          Sharpe                REAL,
+          max_drawdown          REAL,
+          turnover_annualised   REAL,
+          turnover_mean         REAL,
+          turnover_vol          REAL,
+          run_id                PRIMARY KEY
+        );
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS run_id ON backtests(run_id);")
+    conn.commit()
+
+
+
 def write_backtest_outputs(
     results: pd.DataFrame,
     summary: dict[str, float],
-    run_id: str,
+    partition_cols: list[str],
+    base_dir: Path,
+    existing_data_behavior: str = "overwrite_or_ignore",
+    run_id: str = ...,
 ) -> None:
     # TODO: write results to BACKTEST_DIR as parquet (hive by year/run_id)
     # TODO: optionally persist summary to SQLite or JSON
     # TODO: ensure directories exist
-    raise NotImplementedError
+    if results is None or results.empty:
+        raise ValueError("results empty")
+    if summary is None or summary.empty:
+        raise ValueError("results empty")
+    
+    dates = pd.DatetimeIndex(results.index).sort_values()
+    n_cols = ...
+    run_id = ", ".join()
+
+    if "year" not in results.columns and "date" in results.columns:
+        dt = pd.to_datetime(results["date"], errors = "coerce")
+        ok = dt.notna()
+        df = results.loc[ok].copy()
+        df["year"] = dt.loc[ok].dt.year.astype("int32")
+
+    table = pa.Table.from_pandas(df, preserve_index = False)
+    schema = []
+    for col in partition_cols :
+        if col not in df.columns:
+            raise KeyError(f"Missing partition column: {col}")
+        if col == "year":
+            schema.append((col, pa.int32()))
+        else:
+            schema.append((col, pa.string()))
+    partitioning = ds.partitioning(pa.schema(schema), flavor="hive")
+    ds.write_dataset(
+        table,
+        base_dir=str(base_dir),
+        format="parquet",
+        partitioning=partitioning,
+        existing_data_behavior=existing_data_behavior,
+    )
 
 
 def run_backtest_pipeline(run_id: str | None = None) -> None:
