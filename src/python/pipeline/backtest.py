@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, fields
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -95,12 +94,17 @@ def load_prices_dataset(tickers: list[str] | None = None) -> pd.DataFrame:
 
 def load_target_weights(run_id: str | None = None) -> pd.DataFrame:
     dataset = ds.dataset(str(WEIGHTS_DIR), format="parquet", partitioning="hive")
-    if run_id:
-        run_id = int(run_id)
-        filt = ds.field(f"{run_id}").isin(run_id)
-        table = dataset.to_table(filter = filt, columns=["date", "ticker", "weight"])
+    schema_names = set(dataset.schema.names)
+    cols = ["date", "ticker", "weight"]
+    if "run_id" in schema_names:
+        cols.append("run_id")
+    if run_id is not None:
+        if "run_id" not in schema_names:
+            raise KeyError("weights dataset has no run_id column.")
+        filt = ds.field("run_id") == str(run_id)
+        table = dataset.to_table(filter=filt, columns=cols)
     else:
-        table = dataset.to_table(columns = ["date", "ticker", "weight"])
+        table = dataset.to_table(columns=cols)
     df = table.to_pandas()
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
     df = df.dropna(subset=["date", "ticker", "weight"]).sort_values(["date", "ticker"])
@@ -392,8 +396,8 @@ def init_db(conn: sqlite3.Connection) -> None:
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS backtests (
-          tickers     TEXT NOT NULL,
-          date       TEXT NOT NULL,  -- YYYY-MM-DD
+          date_debut     TEXT NOT NULL,
+          date_fin       TEXT NOT NULL,  -- YYYY-MM-DD
           CAGR                  REAL,
           volatility            REAL,
           Sharpe                REAL,
@@ -401,22 +405,47 @@ def init_db(conn: sqlite3.Connection) -> None:
           turnover_annualised   REAL,
           turnover_mean         REAL,
           turnover_vol          REAL,
-          run_id                PRIMARY KEY
+          run_id                TEXT PRIMARY KEY
         );
         """
     )
-    conn.execute("CREATE INDEX IF NOT EXISTS run_id ON backtests(run_id);")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_backtests_run_id ON backtests(run_id);")
     conn.commit()
 
 
-def upsert_summary(conn: sqlite3.Connection, df: pd.DataFrame):
-    if df is None or df.empty:
-        return None
+def upsert_summary(conn: sqlite3.Connection, summary: dict[str, float], run_id: str, date_start: str, date_end: str) -> None:
+    if not summary:
+        return
     sql = """
-    INSERT INTO backtests (tickers, date, CAGR, volatility, Sharpe, max_drawdown, turnover_annualised, turnover_mean, turnover_vol, run_id)
+    INSERT INTO backtests (
+      date_debut, date_fin, CAGR, volatility, Sharpe, max_drawdown,
+      turnover_annualised, turnover_mean, turnover_vol, run_id
+    )
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """
-    conn.execute(sql)
+    ON CONFLICT(run_id) DO UPDATE SET
+      date_debut = excluded.date_debut,
+      date_fin = excluded.date_fin,
+      CAGR = excluded.CAGR,
+      volatility = excluded.volatility,
+      Sharpe = excluded.Sharpe,
+      max_drawdown = excluded.max_drawdown,
+      turnover_annualised = excluded.turnover_annualised,
+      turnover_mean = excluded.turnover_mean,
+      turnover_vol = excluded.turnover_vol;
+    """
+    row = (
+        date_start,
+        date_end,
+        float(summary.get("CAGR", np.nan)),
+        float(summary.get("volatility", np.nan)),
+        float(summary.get("Sharpe", np.nan)),
+        float(summary.get("max_drawdown", np.nan)),
+        float(summary.get("turnover_annualised", np.nan)),
+        float(summary.get("turnover_mean", np.nan)),
+        float(summary.get("turnover_vol", np.nan)),
+        str(run_id),
+    )
+    conn.execute(sql, row)
     conn.commit()
 
 def write_backtest_outputs(
@@ -425,25 +454,20 @@ def write_backtest_outputs(
     partition_cols: list[str],
     base_dir: Path,
     existing_data_behavior: str = "overwrite_or_ignore",
-    run_id: str = ...,
+    run_id: str | None = None,
 ) -> None:
-    # TODO: write results to BACKTEST_DIR as parquet (hive by year/run_id)
-    # TODO: optionally persist summary to SQLite or JSON
-    # TODO: ensure directories exist
     if results is None or results.empty:
         raise ValueError("results empty")
-    if summary is None or summary.empty:
-        raise ValueError("results empty")
-    
-    dates = pd.DatetimeIndex(results.index).sort_values()
-    n_cols = ...
-    run_id = ", ".join()
+    if not summary:
+        raise ValueError("summary empty")
+    if run_id is None:
+        run_id = str(int(time.time()))
 
-    if "year" not in results.columns and "date" in results.columns:
-        dt = pd.to_datetime(results["date"], errors = "coerce")
-        ok = dt.notna()
-        df = results.loc[ok].copy()
-        df["year"] = dt.loc[ok].dt.year.astype("int32")
+    df = results.copy()
+    df["date"] = pd.to_datetime(df.index, errors="coerce")
+    df = df.dropna(subset=["date"]).reset_index(drop=True)
+    df["year"] = df["date"].dt.year.astype("int32")
+    df["run_id"] = str(run_id)
 
     table = pa.Table.from_pandas(df, preserve_index = False)
     schema = []
@@ -462,8 +486,15 @@ def write_backtest_outputs(
         partitioning=partitioning,
         existing_data_behavior=existing_data_behavior,
     )
+    conn = sqlite3.connect(DB_PATH)
+    init_db(conn)
+    dates = df["date"].sort_values()
+    date_start = dates.iloc[0].strftime("%Y-%m-%d")
+    date_end = dates.iloc[-1].strftime("%Y-%m-%d")
+    upsert_summary(conn, summary, run_id, date_start, date_end)
+    conn.close()
+    return None
 
-    
 
 
 
