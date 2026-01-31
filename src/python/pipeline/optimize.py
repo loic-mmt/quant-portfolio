@@ -163,7 +163,7 @@ def compute_covariance(returns_window: pd.DataFrame) -> np.ndarray:
     # TODO: return covariance as numpy array
     if returns_window.empty or None:
         raise ValueError("returns window empty")
-    returns_window.fillna().ffill()
+    returns_window.fillna(0.0)
     return returns_window.cov()
 
 
@@ -177,7 +177,15 @@ def optimize_over_time(
     # TODO: compute covariance and solve min-variance weights
     # TODO: build a DataFrame of weights indexed by date and ticker
     # TODO: return tidy weights frame (date, ticker, weight)
-    raise NotImplementedError
+    window = cfg.lookback
+    covariance = []
+    dates = rebal_dates.to_pydatetime()
+    for d in dates:
+        if d == returns.index:
+            covariance.append(compute_covariance(returns[d-window:d]))
+
+    return covariance
+
 
 
 def write_weights_dataset(
