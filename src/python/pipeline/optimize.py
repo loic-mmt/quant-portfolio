@@ -61,12 +61,11 @@ def load_optimize_config() -> OptimizeConfig:
     merged = {**DEFAULT_CFG.__dict__,**data}
     cfg = OptimizeConfig(**merged)
 
-    if 0 >= cfg.max_weight >= 1:
-        raise ValueError("initial_capital must be between 0 and 1")
-    if 0 >= cfg.min_weight >= 1:
-        raise ValueError("initial_capital must be between 0 and 1")
-
-
+    if 0 >= cfg.max_weight >= 1 or cfg.max_weight < cfg.min_weight:
+        raise ValueError("max_weight must be between 0 and 1 and over min_weight")
+    if 0 >= cfg.min_weight >= 1 or cfg.max_weight > cfg.min_weight:
+        raise ValueError("min_weight must be between 0 and 1 and under max_weight")
+    return cfg
 
 def load_prices_dataset(tickers: list[str] | None = None) -> pd.DataFrame:
     # TODO: read parquet dataset from PRICES_DIR (hive)
