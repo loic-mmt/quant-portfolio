@@ -8,6 +8,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.dataset as ds
 import time
+import yaml
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -26,12 +27,31 @@ class OptimizeConfig:
     lookback: int
 
 
+DEFAULT_CFG = OptimizeConfig(
+    rebal_freq="W",
+    max_weight=0.3,
+    allow_cash=False,
+    min_weight=0.01,
+    lookback=10
+)
+
+
 def load_optimize_config() -> OptimizeConfig:
     # TODO: read config/optimize.yaml (or set defaults if missing)
     # TODO: validate numeric ranges (0 <= min_weight <= max_weight <= 1)
     # TODO: return OptimizeConfig
-    raise NotImplementedError
+    if not CONFIG_PATH.exists():
+        return DEFAULT_CFG
+    content = CONFIG_PATH.read_text().strip()
+    if not content:
+        return DEFAULT_CFG
+    if yaml is None:
+        raise ImportError("PyYAML is required to parse config/backtest.yaml.")
+    
+    data = yaml.safe_load(content)
 
+    if not isinstance(data, dict):
+        raise ValueError("optimize.yaml must contain a YAML mapping (dict).")
 
 def load_prices_dataset(tickers: list[str] | None = None) -> pd.DataFrame:
     # TODO: read parquet dataset from PRICES_DIR (hive)
