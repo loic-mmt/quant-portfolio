@@ -9,6 +9,8 @@ import pyarrow as pa
 import pyarrow.dataset as ds
 import sqlite3
 import time
+import os
+import re
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -505,7 +507,17 @@ def run_backtest_pipeline(run_id: str | None = None) -> None:
     # TODO: simulate portfolio
     # TODO: summarize and write outputs
     # TODO: log key metrics
-    raise NotImplementedError
+
+    cfg = load_backtest_config()
+    files = os.listdir(PRICES_DIR)
+    index = 0
+    prices = pd.DataFrame()
+    while index < len(files):
+        filename = files[index]
+        s = str(filename)
+        m = re.search(r'=(.*)', s, re.DOTALL)
+        prices[f"{m}"] = load_prices_dataset(filename)
+        index +=1
 
 
 if __name__ == "__main__":
