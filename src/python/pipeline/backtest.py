@@ -9,8 +9,7 @@ import pyarrow as pa
 import pyarrow.dataset as ds
 import sqlite3
 import time
-import os
-import re
+import matplotlib.pyplot as plt
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -42,8 +41,6 @@ DEFAULT_CFG = BacktestConfig(
     turnover_cap=None,
     initial_capital=100_000.0
 )
-
-run_id = 0
 
 def load_backtest_config() -> BacktestConfig:
     if not CONFIG_PATH.exists():
@@ -335,6 +332,83 @@ def simulate_portfolio(
     return results
 
 
+def compute_baseline_hold(prices: pd.DataFrame, cfg: BacktestConfig) -> pd.DataFrame:
+    """
+    Baseline hold: equal-weight buy-and-hold from the first available date.
+    Returns a results DataFrame aligned with trading dates (same columns as simulate_portfolio).
+    """
+    if prices is None or prices.empty:
+        raise ValueError("prices is empty")
+    required = {"date", "ticker", "adj_close"}
+    if not required.issubset(prices.columns):
+        missing = ", ".join(sorted(required - set(prices.columns)))
+        raise KeyError(f"Missing required columns: {missing}")
+
+    data = prices.copy()
+    data["date"] = pd.to_datetime(data["date"], errors="coerce")
+    data = data.dropna(subset=["date", "ticker", "adj_close"])
+    price_matrix = (
+        data.pivot_table(index="date", columns="ticker", values="adj_close", aggfunc="last")
+        .sort_index()
+    )
+    price_matrix = price_matrix.dropna(how="all")
+    if price_matrix.empty:
+        raise ValueError("price_matrix is empty after cleaning.")
+
+    dates = pd.DatetimeIndex(price_matrix.index)
+    first_prices = price_matrix.iloc[0]
+    live = first_prices.notna()
+    if live.sum() == 0:
+        raise ValueError("No valid prices on the first date for baseline.")
+
+    weights = np.zeros(len(first_prices), dtype=float)
+    weights[live.values] = 1.0 / float(live.sum())
+
+    # Normalize price relatives to 1 at t0.
+    rel = price_matrix.div(first_prices, axis=1)
+    port_value = (rel * weights).sum(axis=1) * float(cfg.initial_capital)
+    port_return = port_value.pct_change().fillna(0.0)
+
+    results = pd.DataFrame(
+        {
+            "portfolio_value": port_value.values,
+            "portfolio_return": port_return.values,
+            "turnover": np.zeros(len(port_value), dtype=float),
+            "cost": np.zeros(len(port_value), dtype=float),
+            "is_rebalance": np.zeros(len(port_value), dtype=bool),
+        },
+        index=dates,
+    )
+    results["pnl"] = results["portfolio_value"] - cfg.initial_capital
+    return results
+
+
+def plot_backtest_vs_baseline(
+    results: pd.DataFrame,
+    baseline: pd.DataFrame,
+    title: str = "Backtest vs Baseline",
+) -> None:
+    if results is None or results.empty:
+        raise ValueError("results is empty")
+    if baseline is None or baseline.empty:
+        raise ValueError("baseline is empty")
+
+    for name, df in {"results": results, "baseline": baseline}.items():
+        if "portfolio_value" not in df.columns:
+            raise KeyError(f"{name} missing 'portfolio_value' column")
+
+    plt.figure(figsize=(10, 5))
+    plt.plot(results.index, results["portfolio_value"], label="Strategy", linewidth=2)
+    plt.plot(baseline.index, baseline["portfolio_value"], label="Baseline", linewidth=2, linestyle="--")
+    plt.title(title)
+    plt.xlabel("Date")
+    plt.ylabel("Portfolio Value")
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.show()
+
+
 def summarize_performance(results: pd.DataFrame) -> dict[str, float]:
     if results is None or results.empty:
         raise ValueError("results is empty")
@@ -502,35 +576,28 @@ def write_backtest_outputs(
 
 
 def run_backtest_pipeline(run_id: str | None = None) -> None:
-    # TODO: load config
-    # TODO: load prices and weights
-    # TODO: build returns matrix
-    # TODO: simulate portfolio
-    # TODO: summarize and write outputs
-    # TODO: log key metrics
-
     cfg = load_backtest_config()
-    files = os.listdir(PRICES_DIR)
-    index = 0
-    prices = pd.DataFrame()
-    while index < len(files):
-        filename = files[index]
-        s = str(filename)
-        m = re.search(r'=(.*)', s, re.DOTALL)
-        prices[f"{m}"] = load_prices_dataset(filename)
-        index +=1
-
-    weights= load_target_weights(str(run_id))
+    prices = load_prices_dataset()
+    weights = load_target_weights(run_id)
     returns = build_returns_matrix(prices)
     results = simulate_portfolio(returns, weights, cfg)
+    baseline = compute_baseline_hold(prices, cfg)
     summary = summarize_performance(results)
-    write_backtest_outputs(results, summary, partition_cols=..., base_dir=BACKTEST_DIR, run_id=str(run_id))
-    run_id +=1
+    write_backtest_outputs(
+        results,
+        summary,
+        partition_cols=["year", "run_id"],
+        base_dir=BACKTEST_DIR,
+        run_id=run_id,
+    )
+    # Baseline is returned for plotting comparisons (not stored).
+    return results, baseline
 
 
 
 if __name__ == "__main__":
-    # TODO: add argparse for run_id and config overrides
     import argparse
-    argparse.ArgumentParser(...)
-    run_backtest_pipeline()
+    parser = argparse.ArgumentParser(description="Run backtest pipeline.")
+    parser.add_argument("--run-id", default=None, help="Optional run identifier to select weights.")
+    args = parser.parse_args()
+    run_backtest_pipeline(run_id=args.run_id)
