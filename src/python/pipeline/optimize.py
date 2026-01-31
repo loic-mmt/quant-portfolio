@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from pathlib import Path
 
 import numpy as np
@@ -52,6 +52,21 @@ def load_optimize_config() -> OptimizeConfig:
 
     if not isinstance(data, dict):
         raise ValueError("optimize.yaml must contain a YAML mapping (dict).")
+
+    allowed = {f.name for f in fields(OptimizeConfig)}
+    unknown = set(data.keys()) - allowed
+    if unknown:
+        raise ValueError(f"Unknown fields in backtest.yaml: {sorted(unknown)}")
+    
+    merged = {**DEFAULT_CFG.__dict__,**data}
+    cfg = OptimizeConfig(**merged)
+
+    if 0 >= cfg.max_weight >= 1:
+        raise ValueError("initial_capital must be between 0 and 1")
+    if 0 >= cfg.min_weight >= 1:
+        raise ValueError("initial_capital must be between 0 and 1")
+
+
 
 def load_prices_dataset(tickers: list[str] | None = None) -> pd.DataFrame:
     # TODO: read parquet dataset from PRICES_DIR (hive)
