@@ -43,6 +43,7 @@ DEFAULT_CFG = BacktestConfig(
     initial_capital=100_000.0
 )
 
+run_id = 0
 
 def load_backtest_config() -> BacktestConfig:
     if not CONFIG_PATH.exists():
@@ -519,7 +520,17 @@ def run_backtest_pipeline(run_id: str | None = None) -> None:
         prices[f"{m}"] = load_prices_dataset(filename)
         index +=1
 
+    weights= load_target_weights(str(run_id))
+    returns = build_returns_matrix(prices)
+    results = simulate_portfolio(returns, weights, cfg)
+    summary = summarize_performance(results)
+    write_backtest_outputs(results, summary, partition_cols=..., base_dir=BACKTEST_DIR, run_id=str(run_id))
+    run_id +=1
+
+
 
 if __name__ == "__main__":
     # TODO: add argparse for run_id and config overrides
+    import argparse
+    argparse.ArgumentParser(...)
     run_backtest_pipeline()
