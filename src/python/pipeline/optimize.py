@@ -68,11 +68,20 @@ def load_optimize_config() -> OptimizeConfig:
     return cfg
 
 def load_prices_dataset(tickers: list[str] | None = None) -> pd.DataFrame:
-    # TODO: read parquet dataset from PRICES_DIR (hive)
-    # TODO: optionally filter by tickers
-    # TODO: parse date column to datetime
-    # TODO: return tidy frame with date, ticker, adj_close
-    raise NotImplementedError
+    dataset = ds.dataset(str(PRICES_DIR), format="parquet", partitioning="hive")
+
+    if tickers:
+        tickers = [t.upper().strip() for t in tickers]
+        filt = ds.field("ticker").isin(tickers)
+        table = dataset.to_table(filter = filt, columns=["date", "ticker", "adj_close"])
+    else:
+        table = dataset.to_table(columns = ["date", "ticker", "adj_close"])
+    
+    df = table.to_pandas()
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+
+    df = df.dropna(subset=["date", "ticker", "adj_close"]).sort_values(["date","ticker"])
+    return df
 
 
 def build_returns_matrix(prices: pd.DataFrame) -> pd.DataFrame:
