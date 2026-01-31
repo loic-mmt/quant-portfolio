@@ -102,10 +102,51 @@ def build_returns_matrix(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def build_rebalance_dates(index: pd.DatetimeIndex, freq: str) -> pd.DatetimeIndex:
-    # TODO: implement same logic as backtest.build_rebalance_dates
-    # TODO: align to available trading dates
-    # TODO: return DatetimeIndex of rebal dates
-    raise NotImplementedError
+    """
+    Build rebalance dates aligned to available trading dates.
+
+    Parameters
+    ----------
+    index : pd.DatetimeIndex
+        Trading dates (must be sortable, usually business days).
+    freq : str
+        "D", "W", "2W", "M"
+
+    Returns
+    -------
+    pd.DatetimeIndex
+        Rebalance dates (subset of index).
+    """
+    if index is None or len(index) == 0:
+        return pd.DatetimeIndex([])
+    freq = freq.upper().strip()
+    if freq not in {"D", "W", "2W", "M"}:
+        raise ValueError("Frequency must be one of: D, W, 2W, M")
+    
+    # sorted and unique
+    idx = pd.DatetimeIndex(pd.to_datetime(index)).sort_values().unique()
+
+    # Daily
+    if freq == "D":
+        return idx
+    
+    # Map to pandas resample frequency (anchored to Friday for weekly periods)
+    resample_map = {
+        "W": "W-FRI",
+        "2W": "2W-FRI",
+        "M": "M",
+    }
+
+    s = pd.Series(idx, index=idx) # dummy series
+    rebal = s.resample(resample_map[freq]).last().dropna().values
+
+    rebal_idx = pd.DatetimeIndex(rebal)
+
+    if rebal_idx.empty or rebal_idx[0] != idx[0]:
+        rebal_idx = rebal_idx.insert(0, idx[0])
+    
+    rebal_idx = rebal_idx.unique()
+    return rebal_idx
 
 
 def min_variance_weights(cov: np.ndarray, max_weight: float, min_weight: float) -> np.ndarray:
