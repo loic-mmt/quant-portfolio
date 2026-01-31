@@ -161,7 +161,11 @@ def compute_covariance(returns_window: pd.DataFrame) -> np.ndarray:
     # TODO: compute covariance matrix (simple sample cov for now)
     # TODO: handle missing values or drop columns with too many NaNs
     # TODO: return covariance as numpy array
-    raise NotImplementedError
+    if returns_window.empty or None:
+        raise ValueError("returns window empty")
+    returns_window.fillna().ffill()
+    return returns_window.cov()
+
 
 
 def optimize_over_time(
