@@ -263,6 +263,7 @@ def run_optimize_pipeline(
         run_id=run_id,
         existing_data_behavior=existing_data_behavior,
     )
+    print(f"Optimize run_id: {out_run_id}")
     return out_run_id
 
 
