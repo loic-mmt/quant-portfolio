@@ -204,8 +204,36 @@ def write_weights_dataset(
     # TODO: add run_id column if provided (or generate one)
     # TODO: add year partition
     # TODO: write to WEIGHTS_DIR as hive-partitioned parquet
-    raise NotImplementedError
+    if weights is None or weights.empty:
+        raise ValueError("weights empty")
+    base_dir.mkdir(parents=True, exist_ok=True)
 
+    if "year" not in weights.columns and "date" in weights.columns:
+        dt = pd.to_datetime(weights["date"], errors = "coerce")
+        ok = dt.notna()
+        df = df.loc[ok].copy()
+        weights["year"] = dt.loc[ok].dt.year.astype("int32")
+
+    table = pa.Table.from_pandas(weights, preserve_index = True)
+    schema = []
+    for col in partition_cols:
+        if col not in weights.columns:
+            raise KeyError(f"Missing partition cols")
+        if col == "year":
+            schema.append((col, pa.int32))
+        else:
+            schema.append((col, pa.sting()))
+    partitioning = ds.partitioning(pa.schema(schema), flavor="hive")
+    if existing_data_behavior == "overwrite":
+        existing_data_behavior = "delete_matching"
+    ds.write_dataset(
+        table,
+        base_dir=str(base_dir),
+        format="parquet",
+        partitioning=partitioning,
+        existing_data_behavior=existing_data_behavior,
+        run_id=run_id
+    )
 
 def run_optimize_pipeline(run_id: str | None = None) -> str:
     # TODO: load config
