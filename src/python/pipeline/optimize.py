@@ -241,7 +241,11 @@ def run_optimize_pipeline(run_id: str | None = None) -> str:
     # TODO: build rebal dates
     # TODO: optimize over time
     # TODO: write weights dataset and return run_id
-    raise NotImplementedError
+    config = load_optimize_config()
+    prices = load_prices_dataset()
+    returns = build_returns_matrix(prices)
+    rebal_dates = build_rebalance_dates(returns.index, freq="2M")
+    
 
 
 if __name__ == "__main__":
