@@ -356,6 +356,15 @@ def compute_baseline_hold(prices: pd.DataFrame, cfg: BacktestConfig) -> pd.DataF
         .sort_index()
     )
     price_matrix = price_matrix.dropna(how="all")
+    # Choose baseline universe as tickers available on the first date.
+    first_date = price_matrix.index.min()
+    first_row = price_matrix.loc[first_date]
+    live_cols = first_row[first_row.notna()].index.tolist()
+    if not live_cols:
+        raise ValueError("No tickers available on the first date for baseline.")
+    price_matrix = price_matrix[live_cols]
+    price_matrix = price_matrix.ffill()
+    price_matrix = price_matrix.dropna()
     if price_matrix.empty:
         raise ValueError("price_matrix is empty after cleaning.")
 
