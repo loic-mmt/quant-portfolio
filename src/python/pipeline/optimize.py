@@ -8,7 +8,10 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.dataset as ds
 import time
-import yaml
+try:
+    import yaml
+except Exception:
+    yaml = None
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -37,16 +40,13 @@ DEFAULT_CFG = OptimizeConfig(
 
 
 def load_optimize_config() -> OptimizeConfig:
-    # TODO: read config/optimize.yaml (or set defaults if missing)
-    # TODO: validate numeric ranges (0 <= min_weight <= max_weight <= 1)
-    # TODO: return OptimizeConfig
     if not CONFIG_PATH.exists():
         return DEFAULT_CFG
     content = CONFIG_PATH.read_text().strip()
     if not content:
         return DEFAULT_CFG
     if yaml is None:
-        raise ImportError("PyYAML is required to parse config/backtest.yaml.")
+        raise ImportError("PyYAML is required to parse config/optimize.yaml.")
     
     data = yaml.safe_load(content)
 
@@ -56,15 +56,13 @@ def load_optimize_config() -> OptimizeConfig:
     allowed = {f.name for f in fields(OptimizeConfig)}
     unknown = set(data.keys()) - allowed
     if unknown:
-        raise ValueError(f"Unknown fields in backtest.yaml: {sorted(unknown)}")
+        raise ValueError(f"Unknown fields in optimize.yaml: {sorted(unknown)}")
     
     merged = {**DEFAULT_CFG.__dict__,**data}
     cfg = OptimizeConfig(**merged)
 
-    if 0 >= cfg.max_weight >= 1 or cfg.max_weight < cfg.min_weight:
-        raise ValueError("max_weight must be between 0 and 1 and over min_weight")
-    if 0 >= cfg.min_weight >= 1 or cfg.max_weight > cfg.min_weight:
-        raise ValueError("min_weight must be between 0 and 1 and under max_weight")
+    if not (0 <= cfg.min_weight <= cfg.max_weight <= 1):
+        raise ValueError("min_weight/max_weight must satisfy 0 <= min_weight <= max_weight <= 1")
     return cfg
 
 def load_prices_dataset(tickers: list[str] | None = None) -> pd.DataFrame:
@@ -148,28 +146,28 @@ def build_rebalance_dates(index: pd.DatetimeIndex, freq: str) -> pd.DatetimeInde
     rebal_idx = rebal_idx.unique()
     return rebal_idx
 
-from sklearn import svm, datasets
-from sklearn.model_selection import GridSearchCV
 def min_variance_weights(cov: np.ndarray, max_weight: float, min_weight: float) -> np.ndarray:
-    # TODO: solve a simple long-only min-variance (could use a heuristic)
-    # TODO: enforce bounds [min_weight, max_weight]
-    # TODO: normalize to sum to 1
-    # TODO: return weight vector
+    # Simple inverse-variance heuristic (long-only).
+    if cov is None or cov.size == 0:
+        raise ValueError("cov is empty")
+    cov = np.asarray(cov, dtype=float)
+    if cov.ndim != 2 or cov.shape[0] != cov.shape[1]:
+        raise ValueError("cov must be a square 2D array")
 
-    parameters = {"weight": [min_weight, max_weight]}
-    svc = svm.SVC()
-    grid = GridSearchCV(svc, parameters)
-    grid.fit(cov)
-
-    return sorted(grid.cv_results_)
+    var = np.diag(cov)
+    if np.any(var <= 0):
+        raise ValueError("cov has non-positive variances")
+    w = 1.0 / var
+    w = np.clip(w, min_weight, max_weight)
+    s = w.sum()
+    if s <= 0:
+        raise ValueError("weights sum to zero after clipping")
+    return w / s
 
 def compute_covariance(returns_window: pd.DataFrame) -> np.ndarray:
-    # TODO: compute covariance matrix (simple sample cov for now)
-    # TODO: handle missing values or drop columns with too many NaNs
-    # TODO: return covariance as numpy array
-    if returns_window.empty or None:
+    if returns_window is None or returns_window.empty:
         raise ValueError("returns window empty")
-    returns_window.fillna(0.0)
+    returns_window = returns_window.fillna(0.0)
     return returns_window.cov().to_numpy()
 
 
@@ -179,18 +177,33 @@ def optimize_over_time(
     rebal_dates: pd.DatetimeIndex,
     cfg: OptimizeConfig,
 ) -> pd.DataFrame:
-    # TODO: for each rebalance date, take lookback window
-    # TODO: compute covariance and solve min-variance weights
-    # TODO: build a DataFrame of weights indexed by date and ticker
-    # TODO: return tidy weights frame (date, ticker, weight)
-    window = cfg.lookback
-    covariance = []
-    dates = rebal_dates.to_pydatetime()
-    for d in dates:
-        if d == returns.index:
-            covariance.append(compute_covariance(returns[d-window:d]))
+    if returns is None or returns.empty:
+        raise ValueError("returns is empty")
+    if rebal_dates is None or len(rebal_dates) == 0:
+        raise ValueError("rebal_dates is empty")
 
-    return covariance
+    window = int(cfg.lookback)
+    if window <= 1:
+        raise ValueError("lookback must be > 1")
+
+    weights_rows = []
+    returns = returns.sort_index()
+    tickers = list(returns.columns)
+
+    for dt in pd.DatetimeIndex(rebal_dates):
+        hist = returns.loc[:dt].tail(window)
+        if hist.empty:
+            continue
+        cov = compute_covariance(hist)
+        w = min_variance_weights(cov, cfg.max_weight, cfg.min_weight)
+        if w.shape[0] != len(tickers):
+            raise ValueError("weights length mismatch with tickers")
+        for t, wt in zip(tickers, w, strict=False):
+            weights_rows.append({"date": dt, "ticker": t, "weight": float(wt)})
+
+    if not weights_rows:
+        raise ValueError("No weights computed (check lookback/rebal_dates).")
+    return pd.DataFrame(weights_rows)
 
 
 
@@ -201,28 +214,27 @@ def write_weights_dataset(
     run_id: str | None = None,
     existing_data_behavior: str = "overwrite_or_ignore",
 ) -> None:
-    # TODO: add run_id column if provided (or generate one)
-    # TODO: add year partition
-    # TODO: write to WEIGHTS_DIR as hive-partitioned parquet
     if weights is None or weights.empty:
         raise ValueError("weights empty")
     base_dir.mkdir(parents=True, exist_ok=True)
 
-    if "year" not in weights.columns and "date" in weights.columns:
-        dt = pd.to_datetime(weights["date"], errors = "coerce")
-        ok = dt.notna()
-        df = df.loc[ok].copy()
-        weights["year"] = dt.loc[ok].dt.year.astype("int32")
+    df = weights.copy()
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    df = df.dropna(subset=["date", "ticker", "weight"])
+    if run_id is None:
+        run_id = str(int(time.time()))
+    df["run_id"] = str(run_id)
+    df["year"] = df["date"].dt.year.astype("int32")
 
-    table = pa.Table.from_pandas(weights, preserve_index = True)
+    table = pa.Table.from_pandas(df, preserve_index=False)
     schema = []
     for col in partition_cols:
-        if col not in weights.columns:
-            raise KeyError(f"Missing partition cols")
+        if col not in df.columns:
+            raise KeyError(f"Missing partition column: {col}")
         if col == "year":
-            schema.append((col, pa.int32))
+            schema.append((col, pa.int32()))
         else:
-            schema.append((col, pa.sting()))
+            schema.append((col, pa.string()))
     partitioning = ds.partitioning(pa.schema(schema), flavor="hive")
     if existing_data_behavior == "overwrite":
         existing_data_behavior = "delete_matching"
@@ -232,30 +244,33 @@ def write_weights_dataset(
         format="parquet",
         partitioning=partitioning,
         existing_data_behavior=existing_data_behavior,
-        run_id=run_id
     )
+    return str(run_id)
 
-def run_optimize_pipeline(run_id: str | None = None) -> str:
-    # TODO: load config
-    # TODO: load prices and build returns
-    # TODO: build rebal dates
-    # TODO: optimize over time
-    # TODO: write weights dataset and return run_id
+def run_optimize_pipeline(
+    run_id: str | None = None,
+    existing_data_behavior: str = "overwrite_or_ignore",
+) -> str:
     config = load_optimize_config()
     prices = load_prices_dataset()
     returns = build_returns_matrix(prices)
-    rebal_dates = build_rebalance_dates(returns.index, freq="2M")
-    cov = optimize_over_time(returns, rebal_dates, config.lookback)
-    weights = min_variance_weights(cov, config.max_weight, config.min_weight)
-    write_weights_dataset(weights, WEIGHTS_DIR, run_id=run_id)
+    rebal_dates = build_rebalance_dates(returns.index, freq=config.rebal_freq)
+    weights = optimize_over_time(returns, rebal_dates, config)
+    out_run_id = write_weights_dataset(
+        weights,
+        WEIGHTS_DIR,
+        partition_cols=["year", "run_id"],
+        run_id=run_id,
+        existing_data_behavior=existing_data_behavior,
+    )
+    return out_run_id
 
 
 
 if __name__ == "__main__":
-    # TODO: add argparse for run_id and config overrides
     import argparse
 
-    parser = argparse.ArgumentParser(description="COmpute minimum variance weights")
+    parser = argparse.ArgumentParser(description="Compute minimum variance weights")
     parser.add_argument(
         "--existing-data-behavior",
         default="overwrite_or_ignore",
