@@ -164,11 +164,20 @@ def min_variance_weights(cov: np.ndarray, max_weight: float, min_weight: float) 
         raise ValueError("weights sum to zero after clipping")
     return w / s
 
-def compute_covariance(returns_window: pd.DataFrame) -> np.ndarray:
+def compute_covariance(returns_window: pd.DataFrame) -> tuple[np.ndarray, list[str]]:
     if returns_window is None or returns_window.empty:
         raise ValueError("returns window empty")
-    returns_window = returns_window.fillna(0.0)
-    return returns_window.cov().to_numpy()
+    data = returns_window.copy()
+    data = data.dropna(how="all")
+    if data.empty:
+        raise ValueError("returns window empty after dropna")
+    # Keep only columns with at least 2 non-NaN points
+    valid = data.columns[data.count() >= 2]
+    data = data[valid]
+    if data.shape[1] == 0:
+        raise ValueError("no assets with sufficient history for covariance")
+    cov = data.cov(min_periods=2).to_numpy()
+    return cov, list(valid)
 
 
 
@@ -194,11 +203,21 @@ def optimize_over_time(
         hist = returns.loc[:dt].tail(window)
         if hist.empty:
             continue
-        cov = compute_covariance(hist)
+        try:
+            cov, used_cols = compute_covariance(hist)
+        except ValueError:
+            continue
         w = min_variance_weights(cov, cfg.max_weight, cfg.min_weight)
-        if w.shape[0] != len(tickers):
-            raise ValueError("weights length mismatch with tickers")
-        for t, wt in zip(tickers, w, strict=False):
+        # Map back to full universe, zero for missing tickers
+        w_full = np.zeros(len(tickers), dtype=float)
+        col_idx = {c: i for i, c in enumerate(tickers)}
+        for c, wc in zip(used_cols, w, strict=False):
+            if c in col_idx:
+                w_full[col_idx[c]] = float(wc)
+        s = w_full.sum()
+        if s > 0:
+            w_full = w_full / s
+        for t, wt in zip(tickers, w_full, strict=False):
             weights_rows.append({"date": dt, "ticker": t, "weight": float(wt)})
 
     if not weights_rows:

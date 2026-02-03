@@ -101,7 +101,11 @@ def load_target_weights(run_id: str | None = None) -> pd.DataFrame:
     if run_id is not None:
         if "run_id" not in schema_names:
             raise KeyError("weights dataset has no run_id column.")
-        filt = ds.field("run_id") == str(run_id)
+        run_id_field = dataset.schema.field("run_id").type
+        if pa.types.is_integer(run_id_field):
+            filt = ds.field("run_id") == int(run_id)
+        else:
+            filt = ds.field("run_id") == str(run_id)
         table = dataset.to_table(filter=filt, columns=cols)
     else:
         table = dataset.to_table(columns=cols)
@@ -575,7 +579,7 @@ def write_backtest_outputs(
 
 
 
-def run_backtest_pipeline(run_id: str | None = None) -> None:
+def run_backtest_pipeline(run_id: str | None = None, plot: bool = False):
     cfg = load_backtest_config()
     prices = load_prices_dataset()
     weights = load_target_weights(run_id)
@@ -590,7 +594,8 @@ def run_backtest_pipeline(run_id: str | None = None) -> None:
         base_dir=BACKTEST_DIR,
         run_id=run_id,
     )
-    # Baseline is returned for plotting comparisons (not stored).
+    if plot:
+        plot_backtest_vs_baseline(results, baseline)
     return results, baseline
 
 
@@ -599,5 +604,6 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Run backtest pipeline.")
     parser.add_argument("--run-id", default=None, help="Optional run identifier to select weights.")
+    parser.add_argument("--plot", action="store_true", help="Plot strategy vs baseline.")
     args = parser.parse_args()
-    run_backtest_pipeline(run_id=args.run_id)
+    run_backtest_pipeline(run_id=args.run_id, plot=args.plot)
