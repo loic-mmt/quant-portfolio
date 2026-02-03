@@ -245,9 +245,26 @@ def run_optimize_pipeline(run_id: str | None = None) -> str:
     prices = load_prices_dataset()
     returns = build_returns_matrix(prices)
     rebal_dates = build_rebalance_dates(returns.index, freq="2M")
-    
+    cov = optimize_over_time(returns, rebal_dates, config.lookback)
+    weights = min_variance_weights(cov, config.max_weight, config.min_weight)
+    write_weights_dataset(weights, WEIGHTS_DIR, run_id=run_id)
+
 
 
 if __name__ == "__main__":
     # TODO: add argparse for run_id and config overrides
-    run_optimize_pipeline()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="COmpute minimum variance weights")
+    parser.add_argument(
+        "--existing-data-behavior",
+        default="overwrite_or_ignore",
+        choices=["overwrite_or_ignore", "overwrite", "error", "delete_matching"],
+        help="Behavior when target dataset already has data.",
+    )
+    parser.add_argument(
+        "--run_id",
+        default=None,
+    )
+    args = parser.parse_args()
+    run_optimize_pipeline(existing_data_behavior=args.existing_data_behavior, run_id=args.run_id)
