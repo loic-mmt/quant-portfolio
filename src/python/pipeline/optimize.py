@@ -148,14 +148,20 @@ def build_rebalance_dates(index: pd.DatetimeIndex, freq: str) -> pd.DatetimeInde
     rebal_idx = rebal_idx.unique()
     return rebal_idx
 
-
+from sklearn import svm, datasets
+from sklearn.model_selection import GridSearchCV
 def min_variance_weights(cov: np.ndarray, max_weight: float, min_weight: float) -> np.ndarray:
     # TODO: solve a simple long-only min-variance (could use a heuristic)
     # TODO: enforce bounds [min_weight, max_weight]
     # TODO: normalize to sum to 1
     # TODO: return weight vector
-    raise NotImplementedError
 
+    parameters = {"weight": [min_weight, max_weight]}
+    svc = svm.SVC()
+    grid = GridSearchCV(svc, parameters)
+    grid.fit(cov)
+
+    return sorted(grid.cv_results_)
 
 def compute_covariance(returns_window: pd.DataFrame) -> np.ndarray:
     # TODO: compute covariance matrix (simple sample cov for now)
@@ -164,7 +170,7 @@ def compute_covariance(returns_window: pd.DataFrame) -> np.ndarray:
     if returns_window.empty or None:
         raise ValueError("returns window empty")
     returns_window.fillna(0.0)
-    return returns_window.cov()
+    return returns_window.cov().to_numpy()
 
 
 
