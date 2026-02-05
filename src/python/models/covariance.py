@@ -48,8 +48,12 @@ def shrink_to_diagonal(cov: np.ndarray, shrinkage: float) -> np.ndarray:
     # TODO: validate shrinkage in [0, 1]
     # TODO: build diagonal target from cov
     # TODO: return (1-shrinkage)*cov + shrinkage*diag
-    raise NotImplementedError
-
+    if cov is None or cov.empty:
+        raise ValueError("Covariance is empty.")
+    if not 0 < shrinkage > 1: 
+        raise ValueError("shrinkage must be in [0, 1].")
+    diag_target = cov.diagonal()
+    return (1 - shrinkage) * cov + shrinkage * diag_target
 
 def ledoit_wolf_covariance(returns: pd.DataFrame) -> np.ndarray:
     # TODO: implement Ledoit-Wolf (or use sklearn if allowed)
