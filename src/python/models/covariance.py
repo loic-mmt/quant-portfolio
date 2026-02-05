@@ -75,7 +75,14 @@ def ensure_positive_definite(cov: np.ndarray, eps: float = 1e-6) -> np.ndarray:
     # TODO: add eps to diagonal if needed
     # TODO: optionally clip negative eigenvalues
     # TODO: return adjusted covariance
-    raise NotImplementedError
+    diag = cov.diagonal()
+    diag = diag + eps
+    cliped_eigenvalues = diag.copy()
+    for i in diag:
+        if i < 0:
+            cliped_eigenvalues[i] = 0
+    return cliped_eigenvalues
+    
 
 
 def compute_covariance(
