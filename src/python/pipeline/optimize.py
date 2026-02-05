@@ -241,7 +241,15 @@ def get_regime_at_date(regimes: pd.DataFrame, date: pd.Timestamp) -> dict[str, f
     """Return the regime state/probabilities at or before a date (placeholder)."""
     # TODO: select the latest regime row at or before date
     # TODO: return dict with state and probabilities
-    raise NotImplementedError
+    regimes["date"] = pd.to_datetime(regimes["date"], errors="coerce")
+    output = {
+        "date": regimes["date"].where(regimes["date"] == date),
+        "regime":regimes["state"].where(regimes["date"] == date),
+        "p_state_0":regimes["p_state_0"].where(regimes["date"] == date),
+        "p_state_1":regimes["p_state_1"].where(regimes["date"] == date),
+        "p_state_2":regimes["p_state_2"].where(regimes["date"] == date),
+    }
+    return output
 
 
 def regime_policy_from_state(state: int, cfg: OptimizeConfig) -> dict[str, float]:
