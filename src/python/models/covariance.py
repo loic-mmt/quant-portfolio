@@ -34,7 +34,14 @@ def sample_covariance(returns: pd.DataFrame, min_periods: int = 2) -> np.ndarray
     # TODO: compute sample covariance on cleaned returns
     # TODO: handle empty or invalid input
     # TODO: return covariance as numpy array
-    raise NotImplementedError
+    _returns = clean_returns(returns, min_periods)
+    cov_returns = _returns.cov()
+    if cov_returns is None or cov_returns.empty:
+        raise ValueError("Covariance on returns is empty.")
+    cov_returns = cov_returns.to_numpy()
+    return cov_returns
+
+
 
 
 def shrink_to_diagonal(cov: np.ndarray, shrinkage: float) -> np.ndarray:
