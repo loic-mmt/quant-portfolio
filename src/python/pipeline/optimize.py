@@ -227,10 +227,14 @@ def load_mc_dataset() -> pd.DataFrame:
     pd.DataFrame
         Empty until implemented.
     """
-    # TODO: read parquet dataset from data/parquet/mc (hive)
-    # TODO: parse date column to datetime
-    # TODO: return DataFrame with date, state, horizon, var/cvar/q95
-    raise NotImplementedError
+    dataset = ds.dataset(str(REGIME_DIR), format="parquet", partitioning="hive")
+    table = dataset.to_table(columns = ["date", "ticker", "state", "horizon", "var", "cvar", "q95"])
+    
+    df = table.to_pandas()
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+
+    df = df.dropna(subset=["date", "ticker", "state", "horizon", "var", "cvar", "q95"]).sort_values(["date"])
+    return df
 
 
 def get_regime_at_date(regimes: pd.DataFrame, date: pd.Timestamp) -> dict[str, float | int]:
