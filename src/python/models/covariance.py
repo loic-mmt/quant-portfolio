@@ -93,4 +93,23 @@ def compute_covariance(
     # TODO: select method (sample/shrink_diag/ledoit_wolf)
     # TODO: apply ensure_positive_definite
     # TODO: return covariance
-    raise NotImplementedError
+    if returns is None or returns.empty:
+        raise ValueError("Returns are empty.")
+    _returns = clean_returns(returns, cfg.min_periods)
+    if cfg.method is not None:
+        method = cfg.method
+    else :
+        method = "ledoit_wolf"
+
+    
+    if method == "sample":
+        cov = sample_covariance(_returns, cfg.min_periods)
+        covariance = ensure_positive_definite(cov, cfg.eps)
+    elif method == "shrink_diag":
+        cov = sample_covariance(_returns, cfg.min_periods)
+        cov = shrink_to_diagonal(cov, cfg.shrinkage)
+        covariance = ensure_positive_definite(cov, cfg.eps)
+    elif method == "ledoit_wolf":
+        cov = ledoit_wolf_covariance(_returns)
+        covariance = ensure_positive_definite(cov, cfg.eps)
+    return covariance
