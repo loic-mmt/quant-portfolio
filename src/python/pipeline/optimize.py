@@ -23,7 +23,21 @@ CONFIG_PATH = ROOT / "config/optimize.yaml"
 
 @dataclass
 class OptimizeConfig:
-    """Configuration for the optimization pipeline."""
+    """Configuration for the optimization pipeline.
+
+    Attributes
+    ----------
+    rebal_freq : str
+        Rebalance frequency ("D", "W", "2W", "M").
+    max_weight : float
+        Maximum per-asset weight cap.
+    allow_cash : bool
+        If True, allow weights to sum to less than 1.0.
+    min_weight : float
+        Minimum per-asset weight floor.
+    lookback : int
+        Lookback window length (in rows) for covariance estimation.
+    """
     rebal_freq: str
     max_weight: float
     allow_cash: bool
@@ -41,7 +55,20 @@ DEFAULT_CFG = OptimizeConfig(
 
 
 def load_optimize_config() -> OptimizeConfig:
-    """Load optimizer configuration from YAML or defaults."""
+    """Load optimizer configuration from YAML or defaults.
+
+    Returns
+    -------
+    OptimizeConfig
+        The validated configuration, using defaults when missing.
+
+    Raises
+    ------
+    ImportError
+        If PyYAML is not available and a config file exists.
+    ValueError
+        If the YAML structure or parameters are invalid.
+    """
     if not CONFIG_PATH.exists():
         return DEFAULT_CFG
     content = CONFIG_PATH.read_text().strip()
@@ -68,7 +95,18 @@ def load_optimize_config() -> OptimizeConfig:
     return cfg
 
 def load_prices_dataset(tickers: list[str] | None = None) -> pd.DataFrame:
-    """Load the prices parquet dataset, optionally filtered by tickers."""
+    """Load the prices parquet dataset, optionally filtered by tickers.
+
+    Parameters
+    ----------
+    tickers : list[str] | None
+        Optional list of tickers to filter.
+
+    Returns
+    -------
+    pd.DataFrame
+        Prices in long format with columns: date, ticker, adj_close.
+    """
     dataset = ds.dataset(str(PRICES_DIR), format="parquet", partitioning="hive")
 
     if tickers:
@@ -86,7 +124,18 @@ def load_prices_dataset(tickers: list[str] | None = None) -> pd.DataFrame:
 
 
 def build_returns_matrix(df: pd.DataFrame) -> pd.DataFrame:
-    """Pivot prices into a returns matrix indexed by date."""
+    """Pivot prices into a returns matrix indexed by date.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Long-form prices with columns date, ticker, adj_close.
+
+    Returns
+    -------
+    pd.DataFrame
+        Log returns with dates as index and tickers as columns.
+    """
     if df is None or df.empty:
         raise ValueError("Prices data are empty.")
     required = {"date", "ticker", "adj_close"}
@@ -152,7 +201,13 @@ def build_rebalance_dates(index: pd.DatetimeIndex, freq: str) -> pd.DatetimeInde
 
 
 def load_regimes_dataset() -> pd.DataFrame:
-    """Load the regimes dataset (placeholder)."""
+    """Load the regimes dataset (placeholder).
+
+    Returns
+    -------
+    pd.DataFrame
+        Empty until implemented.
+    """
     # TODO: read parquet dataset from data/parquet/regimes (hive)
     # TODO: parse date column to datetime
     # TODO: return DataFrame with date, state, probabilities
@@ -160,7 +215,13 @@ def load_regimes_dataset() -> pd.DataFrame:
 
 
 def load_mc_dataset() -> pd.DataFrame:
-    """Load the MC risk dataset (placeholder)."""
+    """Load the MC risk dataset (placeholder).
+
+    Returns
+    -------
+    pd.DataFrame
+        Empty until implemented.
+    """
     # TODO: read parquet dataset from data/parquet/mc (hive)
     # TODO: parse date column to datetime
     # TODO: return DataFrame with date, state, horizon, var/cvar/q95
@@ -217,7 +278,22 @@ def apply_mc_overlay(
     raise NotImplementedError
 
 def min_variance_weights(cov: np.ndarray, max_weight: float, min_weight: float) -> np.ndarray:
-    """Compute a simple inverse-variance long-only weight vector."""
+    """Compute a simple inverse-variance long-only weight vector.
+
+    Parameters
+    ----------
+    cov : np.ndarray
+        Covariance matrix.
+    max_weight : float
+        Upper bound for each weight.
+    min_weight : float
+        Lower bound for each weight.
+
+    Returns
+    -------
+    np.ndarray
+        Normalized weight vector that sums to 1.
+    """
     # Simple inverse-variance heuristic (long-only).
     if cov is None or cov.size == 0:
         raise ValueError("cov is empty")
@@ -236,7 +312,18 @@ def min_variance_weights(cov: np.ndarray, max_weight: float, min_weight: float) 
     return w / s
 
 def compute_covariance(returns_window: pd.DataFrame) -> tuple[np.ndarray, list[str]]:
-    """Compute covariance from a return window and list of used assets."""
+    """Compute covariance from a return window and list of used assets.
+
+    Parameters
+    ----------
+    returns_window : pd.DataFrame
+        Returns subset used to compute covariance.
+
+    Returns
+    -------
+    tuple[np.ndarray, list[str]]
+        Covariance matrix and list of asset columns kept.
+    """
     if returns_window is None or returns_window.empty:
         raise ValueError("returns window empty")
     data = returns_window.copy()
@@ -258,7 +345,22 @@ def optimize_over_time(
     rebal_dates: pd.DatetimeIndex,
     cfg: OptimizeConfig,
 ) -> pd.DataFrame:
-    """Compute weights at each rebalance date using a rolling window."""
+    """Compute weights at each rebalance date using a rolling window.
+
+    Parameters
+    ----------
+    returns : pd.DataFrame
+        Returns matrix.
+    rebal_dates : pd.DatetimeIndex
+        Dates when the portfolio should be rebalanced.
+    cfg : OptimizeConfig
+        Optimization configuration.
+
+    Returns
+    -------
+    pd.DataFrame
+        Long-form weights with columns: date, ticker, weight.
+    """
     if returns is None or returns.empty:
         raise ValueError("returns is empty")
     if rebal_dates is None or len(rebal_dates) == 0:
@@ -306,7 +408,25 @@ def write_weights_dataset(
     run_id: str | None = None,
     existing_data_behavior: str = "overwrite_or_ignore",
 ) -> None:
-    """Write weights to a partitioned parquet dataset."""
+    """Write weights to a partitioned parquet dataset.
+
+    Parameters
+    ----------
+    weights : pd.DataFrame
+        Long-form weights with date/ticker/weight columns.
+    base_dir : Path
+        Root directory for the dataset.
+    partition_cols : list[str]
+        Columns used for hive-style partitioning.
+    run_id : str | None
+        Optional run identifier; defaults to a timestamp.
+    existing_data_behavior : str
+        Behavior when data already exist.
+
+    Returns
+    -------
+    None
+    """
     if weights is None or weights.empty:
         raise ValueError("weights empty")
     base_dir.mkdir(parents=True, exist_ok=True)
@@ -344,7 +464,20 @@ def run_optimize_pipeline(
     run_id: str | None = None,
     existing_data_behavior: str = "overwrite_or_ignore",
 ) -> str:
-    """Run the optimize pipeline end-to-end and return the run id."""
+    """Run the optimize pipeline end-to-end and return the run id.
+
+    Parameters
+    ----------
+    run_id : str | None
+        Optional run identifier.
+    existing_data_behavior : str
+        Behavior when data already exist.
+
+    Returns
+    -------
+    str
+        The run identifier used for the output dataset.
+    """
     config = load_optimize_config()
     prices = load_prices_dataset()
     returns = build_returns_matrix(prices)

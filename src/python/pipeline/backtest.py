@@ -28,7 +28,21 @@ except Exception:
 
 @dataclass
 class BacktestConfig:
-    """Configuration for the backtest pipeline."""
+    """Configuration for the backtest pipeline.
+
+    Attributes
+    ----------
+    rebal_freq : str
+        Rebalance frequency ("D", "W", "2W", "M").
+    transaction_bps : float
+        Transaction fee in basis points, applied on turnover.
+    slippage_bps : float
+        Slippage cost in basis points, applied on turnover.
+    turnover_cap : float | None
+        Optional cap on turnover per rebalance (0..1). None disables.
+    initial_capital : float
+        Starting portfolio value.
+    """
     rebal_freq: str
     transaction_bps: float
     slippage_bps: float
@@ -44,7 +58,20 @@ DEFAULT_CFG = BacktestConfig(
 )
 
 def load_backtest_config() -> BacktestConfig:
-    """Load backtest configuration from YAML or defaults."""
+    """Load backtest configuration from YAML or defaults.
+
+    Returns
+    -------
+    BacktestConfig
+        The validated configuration, using defaults when missing.
+
+    Raises
+    ------
+    ImportError
+        If PyYAML is not available and a config file exists.
+    ValueError
+        If the YAML structure or parameters are invalid.
+    """
     if not CONFIG_PATH.exists():
         return DEFAULT_CFG
     
@@ -78,7 +105,18 @@ def load_backtest_config() -> BacktestConfig:
 
 
 def load_prices_dataset(tickers: list[str] | None = None) -> pd.DataFrame:
-    """Load the prices parquet dataset, optionally filtered by tickers."""
+    """Load the prices parquet dataset, optionally filtered by tickers.
+
+    Parameters
+    ----------
+    tickers : list[str] | None
+        Optional list of tickers to filter.
+
+    Returns
+    -------
+    pd.DataFrame
+        Prices in long format with columns: date, ticker, adj_close.
+    """
     dataset = ds.dataset(str(PRICES_DIR), format="parquet", partitioning="hive")
 
     if tickers:
@@ -96,7 +134,18 @@ def load_prices_dataset(tickers: list[str] | None = None) -> pd.DataFrame:
 
 
 def load_target_weights(run_id: str | None = None) -> pd.DataFrame:
-    """Load target weights from parquet, optionally filtered by run_id."""
+    """Load target weights from parquet, optionally filtered by run_id.
+
+    Parameters
+    ----------
+    run_id : str | None
+        Optional run identifier used to filter the weights dataset.
+
+    Returns
+    -------
+    pd.DataFrame
+        Long-form weights with columns: date, ticker, weight.
+    """
     dataset = ds.dataset(str(WEIGHTS_DIR), format="parquet", partitioning="hive")
     schema_names = set(dataset.schema.names)
     cols = ["date", "ticker", "weight"]
@@ -120,7 +169,18 @@ def load_target_weights(run_id: str | None = None) -> pd.DataFrame:
 
 
 def build_returns_matrix(df: pd.DataFrame) -> pd.DataFrame:
-    """Pivot prices into a returns matrix indexed by date."""
+    """Pivot prices into a returns matrix indexed by date.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Long-form prices with columns date, ticker, adj_close.
+
+    Returns
+    -------
+    pd.DataFrame
+        Log returns with dates as index and tickers as columns.
+    """
     if df is None or df.empty:
         raise ValueError("Prices data are empty.")
     required = {"date", "ticker", "adj_close"}
@@ -152,6 +212,11 @@ def build_rebalance_dates(index: pd.DatetimeIndex, freq: str) -> pd.DatetimeInde
     -------
     pd.DatetimeIndex
         Rebalance dates (subset of index).
+
+    Raises
+    ------
+    ValueError
+        If `freq` is not one of the supported values.
     """
     if index is None or len(index) == 0:
         return pd.DatetimeIndex([])
@@ -191,7 +256,22 @@ def align_weights_to_dates(
     rebal_dates: pd.DatetimeIndex,
     tickers: list[str],
 ) -> pd.DataFrame:
-    """Align target weights to rebalance dates and full ticker universe."""
+    """Align target weights to rebalance dates and full ticker universe.
+
+    Parameters
+    ----------
+    target_weights : pd.DataFrame
+        Long-form weights with date/ticker/weight.
+    rebal_dates : pd.DatetimeIndex
+        Target rebalance dates.
+    tickers : list[str]
+        Full universe used to reindex weights.
+
+    Returns
+    -------
+    pd.DataFrame
+        Wide matrix (date x ticker) of aligned weights.
+    """
     if target_weights is None or target_weights.empty:
         raise ValueError("target_weights is empty")
     
@@ -220,7 +300,10 @@ def align_weights_to_dates(
 
 
 def compute_turnover(prev_w: np.ndarray, next_w: np.ndarray) -> float:
-    """Compute one-way turnover between two weight vectors."""
+    """Compute one-way turnover between two weight vectors.
+
+    Turnover is defined as 0.5 * sum(|w_t - w_{t-1}|).
+    """
     prev_w = np.array(prev_w, dtype=float)
     next_w = np.array(next_w, dtype=float)
 
@@ -235,7 +318,11 @@ def apply_turnover_cap(
     next_w: np.ndarray,
     cap: float | None,
 ) -> np.ndarray:
-    """Cap turnover by shrinking moves toward target weights."""
+    """Cap turnover by shrinking moves toward target weights.
+
+    If turnover exceeds `cap`, weights are moved proportionally toward
+    the target so that the resulting turnover equals `cap`.
+    """
     prev_w = np.asarray(prev_w, dtype=float)
     next_w = np.asarray(next_w, dtype=float)
 
@@ -260,7 +347,22 @@ def apply_turnover_cap(
 
 
 def estimate_transaction_costs(turnover: float, bps: float, slippage_bps: float) -> float:
-    """Estimate total cost from turnover, fees, and slippage."""
+    """Estimate total cost from turnover, fees, and slippage.
+
+    Parameters
+    ----------
+    turnover : float
+        One-way turnover between current and target weights.
+    bps : float
+        Transaction fee in basis points.
+    slippage_bps : float
+        Slippage cost in basis points.
+
+    Returns
+    -------
+    float
+        Fractional cost deducted from portfolio value.
+    """
     if turnover < 0:
         raise ValueError("turnover must be >= 0")
     if bps < 0:
@@ -280,7 +382,22 @@ def simulate_portfolio(
     target_weights: pd.DataFrame,
     cfg: BacktestConfig,
 ) -> pd.DataFrame:
-    """Simulate portfolio value and returns with periodic rebalancing."""
+    """Simulate portfolio value and returns with periodic rebalancing.
+
+    Parameters
+    ----------
+    returns : pd.DataFrame
+        Returns matrix (date x ticker).
+    target_weights : pd.DataFrame
+        Long-form target weights with date/ticker/weight.
+    cfg : BacktestConfig
+        Backtest parameters.
+
+    Returns
+    -------
+    pd.DataFrame
+        Results indexed by date with value, returns, turnover, and costs.
+    """
     
     if returns is None or returns.empty:
          raise ValueError("returns is empty")
@@ -411,7 +528,17 @@ def plot_backtest_vs_baseline(
     baseline: pd.DataFrame,
     title: str = "Backtest vs Baseline",
 ) -> None:
-    """Plot strategy equity curve against the baseline."""
+    """Plot strategy equity curve against the baseline.
+
+    Parameters
+    ----------
+    results : pd.DataFrame
+        Backtest results from `simulate_portfolio`.
+    baseline : pd.DataFrame
+        Baseline results from `compute_baseline_hold`.
+    title : str
+        Figure title.
+    """
     if results is None or results.empty:
         raise ValueError("results is empty")
     if baseline is None or baseline.empty:
@@ -434,7 +561,10 @@ def plot_backtest_vs_baseline(
 
 
 def summarize_performance(results: pd.DataFrame) -> dict[str, float]:
-    """Compute summary performance statistics from backtest results."""
+    """Compute summary performance statistics from backtest results.
+
+    Returns CAGR, volatility, Sharpe ratio, max drawdown, and turnover stats.
+    """
     if results is None or results.empty:
         raise ValueError("results is empty")
     
@@ -560,7 +690,23 @@ def write_backtest_outputs(
     existing_data_behavior: str = "overwrite_or_ignore",
     run_id: str | None = None,
 ) -> None:
-    """Write backtest results to parquet and upsert summary in SQLite."""
+    """Write backtest results to parquet and upsert summary in SQLite.
+
+    Parameters
+    ----------
+    results : pd.DataFrame
+        Backtest time series.
+    summary : dict[str, float]
+        Summary metrics to store in SQLite.
+    partition_cols : list[str]
+        Parquet partition columns (hive-style).
+    base_dir : Path
+        Output directory for the dataset.
+    existing_data_behavior : str
+        Behavior when data already exist.
+    run_id : str | None
+        Optional run identifier; defaults to a timestamp.
+    """
     if results is None or results.empty:
         raise ValueError("results empty")
     if not summary:
@@ -604,7 +750,20 @@ def write_backtest_outputs(
 
 
 def run_backtest_pipeline(run_id: str | None = None, plot: bool = False):
-    """Run the backtest pipeline end-to-end."""
+    """Run the backtest pipeline end-to-end.
+
+    Parameters
+    ----------
+    run_id : str | None
+        Optional run identifier to select weights.
+    plot : bool
+        If True, plot strategy vs baseline curves.
+
+    Returns
+    -------
+    tuple[pd.DataFrame, pd.DataFrame]
+        (results, baseline)
+    """
     cfg = load_backtest_config()
     prices = load_prices_dataset()
     weights = load_target_weights(run_id)
