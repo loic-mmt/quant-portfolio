@@ -5,6 +5,7 @@
 #include <random>
 #include <stdexcept>
 
+// Compute a lower-triangular Cholesky factor for a symmetric matrix.
 static std::vector<double> cholesky_lower(
     const std::vector<double>& a,
     std::size_t n
@@ -28,6 +29,7 @@ static std::vector<double> cholesky_lower(
     return l;
 }
 
+// Simulate multivariate Gaussian paths using Cholesky decomposition.
 MCResult simulate_paths(
     const std::vector<double>& mu,
     const std::vector<double>& sigma_flat,
@@ -75,6 +77,7 @@ MCResult simulate_paths(
     return out;
 }
 
+// Compute an empirical quantile for a vector of values.
 static double quantile(std::vector<double> v, double q) {
     if (v.empty()) {
         return 0.0;
@@ -89,6 +92,7 @@ static double quantile(std::vector<double> v, double q) {
     return v[idx];
 }
 
+// Summarize simulated paths into VaR/CVaR and q95.
 Summary summarize_paths(
     const std::vector<double>& paths,
     std::size_t n_sims,

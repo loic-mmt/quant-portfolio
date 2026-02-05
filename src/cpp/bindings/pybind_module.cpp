@@ -6,7 +6,7 @@
 namespace py = pybind11;
 
 PYBIND11_MODULE(quant_mc, m) {
-    m.doc() = "Minimal MC engine building";
+    m.doc() = "Minimal Monte Carlo engine bindings.";
 
     py::class_<MCResult>(m, "MCResult")
         .def_readonly("paths", &MCResult::paths)
@@ -19,6 +19,6 @@ PYBIND11_MODULE(quant_mc, m) {
         .def_readonly("cvar", &Summary::cvar)
         .def_readonly("q95", &Summary::q95);
     
-    m.def("simulate_paths", &simulate_paths, "Simulate MC paths");
-    m.def("summarize_paths", &summarize_paths, "Summarize MC paths");
+    m.def("simulate_paths", &simulate_paths, "Simulate multivariate Gaussian paths.");
+    m.def("summarize_paths", &summarize_paths, "Summarize paths into VaR/CVaR and q95.");
 }

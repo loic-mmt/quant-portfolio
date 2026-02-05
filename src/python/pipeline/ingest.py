@@ -81,6 +81,7 @@ tickers_2024 = [
 
 
 def init_db(conn: sqlite3.Connection) -> None:
+    """Create the metadata table for tracking last ingested dates."""
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS last_dates (
@@ -102,6 +103,7 @@ def init_db(conn: sqlite3.Connection) -> None:
 
 
 def get_last_date(conn: sqlite3.Connection, ticker: str) -> str | None:
+    """Return the last ingested date (YYYY-MM-DD) for a ticker."""
     row = conn.execute(
         "SELECT MAX(date) FROM last_dates WHERE ticker = ?",
         (ticker,),
@@ -110,6 +112,7 @@ def get_last_date(conn: sqlite3.Connection, ticker: str) -> str | None:
 
 
 def download_one(ticker: str, start: str | None, end: str | None = None) -> pd.DataFrame:
+    """Download daily OHLCV data from yfinance for a ticker."""
     # auto_adjust=False pour garder Adj Close
     # group_by='column' => si MultiIndex, le niveau 0 = champ (Open/High/...), niveau 1 = ticker
     return yf.download(
@@ -280,6 +283,7 @@ def upsert_prices(df: pd.DataFrame) -> int:
 
 
 def main() -> None:
+    """Run the ingestion pipeline for the static ticker list."""
     conn = sqlite3.connect(DB_PATH)
     init_db(conn)
 

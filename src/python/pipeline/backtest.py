@@ -28,6 +28,7 @@ except Exception:
 
 @dataclass
 class BacktestConfig:
+    """Configuration for the backtest pipeline."""
     rebal_freq: str
     transaction_bps: float
     slippage_bps: float
@@ -43,6 +44,7 @@ DEFAULT_CFG = BacktestConfig(
 )
 
 def load_backtest_config() -> BacktestConfig:
+    """Load backtest configuration from YAML or defaults."""
     if not CONFIG_PATH.exists():
         return DEFAULT_CFG
     
@@ -76,6 +78,7 @@ def load_backtest_config() -> BacktestConfig:
 
 
 def load_prices_dataset(tickers: list[str] | None = None) -> pd.DataFrame:
+    """Load the prices parquet dataset, optionally filtered by tickers."""
     dataset = ds.dataset(str(PRICES_DIR), format="parquet", partitioning="hive")
 
     if tickers:
@@ -93,6 +96,7 @@ def load_prices_dataset(tickers: list[str] | None = None) -> pd.DataFrame:
 
 
 def load_target_weights(run_id: str | None = None) -> pd.DataFrame:
+    """Load target weights from parquet, optionally filtered by run_id."""
     dataset = ds.dataset(str(WEIGHTS_DIR), format="parquet", partitioning="hive")
     schema_names = set(dataset.schema.names)
     cols = ["date", "ticker", "weight"]
@@ -116,6 +120,7 @@ def load_target_weights(run_id: str | None = None) -> pd.DataFrame:
 
 
 def build_returns_matrix(df: pd.DataFrame) -> pd.DataFrame:
+    """Pivot prices into a returns matrix indexed by date."""
     if df is None or df.empty:
         raise ValueError("Prices data are empty.")
     required = {"date", "ticker", "adj_close"}
@@ -186,6 +191,7 @@ def align_weights_to_dates(
     rebal_dates: pd.DatetimeIndex,
     tickers: list[str],
 ) -> pd.DataFrame:
+    """Align target weights to rebalance dates and full ticker universe."""
     if target_weights is None or target_weights.empty:
         raise ValueError("target_weights is empty")
     
@@ -214,6 +220,7 @@ def align_weights_to_dates(
 
 
 def compute_turnover(prev_w: np.ndarray, next_w: np.ndarray) -> float:
+    """Compute one-way turnover between two weight vectors."""
     prev_w = np.array(prev_w, dtype=float)
     next_w = np.array(next_w, dtype=float)
 
@@ -228,6 +235,7 @@ def apply_turnover_cap(
     next_w: np.ndarray,
     cap: float | None,
 ) -> np.ndarray:
+    """Cap turnover by shrinking moves toward target weights."""
     prev_w = np.asarray(prev_w, dtype=float)
     next_w = np.asarray(next_w, dtype=float)
 
@@ -252,6 +260,7 @@ def apply_turnover_cap(
 
 
 def estimate_transaction_costs(turnover: float, bps: float, slippage_bps: float) -> float:
+    """Estimate total cost from turnover, fees, and slippage."""
     if turnover < 0:
         raise ValueError("turnover must be >= 0")
     if bps < 0:
@@ -271,6 +280,7 @@ def simulate_portfolio(
     target_weights: pd.DataFrame,
     cfg: BacktestConfig,
 ) -> pd.DataFrame:
+    """Simulate portfolio value and returns with periodic rebalancing."""
     
     if returns is None or returns.empty:
          raise ValueError("returns is empty")
@@ -401,6 +411,7 @@ def plot_backtest_vs_baseline(
     baseline: pd.DataFrame,
     title: str = "Backtest vs Baseline",
 ) -> None:
+    """Plot strategy equity curve against the baseline."""
     if results is None or results.empty:
         raise ValueError("results is empty")
     if baseline is None or baseline.empty:
@@ -423,6 +434,7 @@ def plot_backtest_vs_baseline(
 
 
 def summarize_performance(results: pd.DataFrame) -> dict[str, float]:
+    """Compute summary performance statistics from backtest results."""
     if results is None or results.empty:
         raise ValueError("results is empty")
     
@@ -483,6 +495,7 @@ def summarize_performance(results: pd.DataFrame) -> dict[str, float]:
 
 
 def init_db(conn: sqlite3.Connection) -> None:
+    """Initialize the backtests metadata table in SQLite."""
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS backtests (
@@ -504,6 +517,7 @@ def init_db(conn: sqlite3.Connection) -> None:
 
 
 def upsert_summary(conn: sqlite3.Connection, summary: dict[str, float], run_id: str, date_start: str, date_end: str) -> None:
+    """Insert or update a backtest summary row for a given run id."""
     if not summary:
         return
     sql = """
@@ -546,6 +560,7 @@ def write_backtest_outputs(
     existing_data_behavior: str = "overwrite_or_ignore",
     run_id: str | None = None,
 ) -> None:
+    """Write backtest results to parquet and upsert summary in SQLite."""
     if results is None or results.empty:
         raise ValueError("results empty")
     if not summary:
@@ -589,6 +604,7 @@ def write_backtest_outputs(
 
 
 def run_backtest_pipeline(run_id: str | None = None, plot: bool = False):
+    """Run the backtest pipeline end-to-end."""
     cfg = load_backtest_config()
     prices = load_prices_dataset()
     weights = load_target_weights(run_id)

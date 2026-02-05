@@ -11,6 +11,7 @@ from sklearn.covariance import LedoitWolf
 
 @dataclass
 class CovarianceConfig:
+    """Configuration for covariance estimation and conditioning."""
     method: Literal["sample", "shrink_diag", "ledoit_wolf"]
     shrinkage: float
     min_periods: int
@@ -18,6 +19,7 @@ class CovarianceConfig:
 
 
 def clean_returns(returns: pd.DataFrame, min_obs: int = 2) -> pd.DataFrame:
+    """Drop empty rows/columns and keep assets with enough observations."""
     if returns is None or returns.empty:
         raise ValueError("Returns are empty.")
     data = returns.copy()
@@ -32,6 +34,7 @@ def clean_returns(returns: pd.DataFrame, min_obs: int = 2) -> pd.DataFrame:
 
 
 def sample_covariance(returns: pd.DataFrame, min_periods: int = 2) -> np.ndarray:
+    """Compute sample covariance matrix from returns."""
     if returns is None or returns.empty:
         raise ValueError("Returns are empty.")
     _returns = clean_returns(returns, min_periods)
@@ -45,6 +48,7 @@ def sample_covariance(returns: pd.DataFrame, min_periods: int = 2) -> np.ndarray
 
 
 def shrink_to_diagonal(cov: np.ndarray, shrinkage: float) -> np.ndarray:
+    """Shrink covariance toward its diagonal target."""
     if cov is None or cov.size == 0:
         raise ValueError("Covariance is empty.")
     if not (0.0 <= shrinkage <= 1.0):
@@ -55,6 +59,7 @@ def shrink_to_diagonal(cov: np.ndarray, shrinkage: float) -> np.ndarray:
 
 
 def ledoit_wolf_covariance(returns: pd.DataFrame) -> np.ndarray:
+    """Compute Ledoit-Wolf shrinkage covariance from returns."""
     if returns is None or returns.empty:
         raise ValueError("Returns are empty.")
     _returns = clean_returns(returns)
@@ -63,6 +68,7 @@ def ledoit_wolf_covariance(returns: pd.DataFrame) -> np.ndarray:
 
 
 def ensure_positive_definite(cov: np.ndarray, eps: float = 1e-6) -> np.ndarray:
+    """Clip eigenvalues to enforce positive definiteness."""
     if cov is None or cov.size == 0:
         raise ValueError("Covariance is empty.")
     cov = np.asarray(cov, dtype=float)
@@ -80,6 +86,7 @@ def compute_covariance(
     returns: pd.DataFrame,
     cfg: CovarianceConfig,
 ) -> np.ndarray:
+    """Compute covariance matrix with the chosen estimator and conditioning."""
     if returns is None or returns.empty:
         raise ValueError("Returns are empty.")
     _returns = clean_returns(returns, cfg.min_periods)

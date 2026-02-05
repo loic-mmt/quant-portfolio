@@ -31,6 +31,7 @@ except Exception:
 
 
 def load_regime_features() -> pd.DataFrame:
+    """Load regime feature dataset from parquet."""
     dataset_regime = ds.dataset(str(FEATURES_REGIME_DIR), format="parquet", partitioning="hive")
     df_regime = dataset_regime.to_table().to_pandas()
     if "date" in df_regime.columns:
@@ -39,6 +40,7 @@ def load_regime_features() -> pd.DataFrame:
 
 
 def load_regime_config() -> dict[str, Any]:
+    """Load regimes YAML configuration or return empty dict."""
     if not CONFIG_PATH.exists():
         return {}
     content = CONFIG_PATH.read_text().strip()
@@ -51,6 +53,7 @@ def load_regime_config() -> dict[str, Any]:
 
 
 def select_regime_features(df: pd.DataFrame, feature_cols: list[str]) -> pd.DataFrame:
+    """Select and clean the feature columns used for regime modeling."""
     if df is None or df.empty:
         raise ValueError("X is empty.")
     if "date" in df.columns:
@@ -69,6 +72,7 @@ def standardize_train_apply_all(
     df: pd.DataFrame,
     train_end: str,
 ) -> tuple[pd.DataFrame, pd.Series, pd.Series]:
+    """Z-score features using train window statistics, applied to all dates."""
     train_end_dt = pd.to_datetime(train_end)
     train = df.loc[:train_end_dt]
     mean = train.mean()
@@ -78,18 +82,21 @@ def standardize_train_apply_all(
 
 
 def fit_regime_model(df_z: pd.DataFrame, mkt_returns: pd.Series):
+    """Fit the market and feature HMM models for regimes."""
     results_hmm_mkt = fit_markov_market(mkt_returns)
     hmm_features = fit_hmm_features(df_z)
     return results_hmm_mkt, hmm_features
 
 
 def build_regime_outputs(model, df_z: pd.DataFrame) -> pd.DataFrame:
+    """Build regime states and probabilities output frame."""
     states = hmm_states_from_model(model, df_z)
     proba = hmm_proba_from_model(model, df_z)
     return pd.concat([states, proba], axis=1)
 
 
 def init_features_db(conn: sqlite3.Connection) -> None:
+    """Initialize SQLite table storing last regime dates."""
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS regimes_last_dates (
@@ -127,6 +134,7 @@ def upsert_regime_last_dates(
     ticker_col: str = "ticker",
     date_col: str = "date",
 ) -> None:
+    """Upsert the latest available regime date per ticker."""
     if df is None or df.empty:
         return
     if ticker_col not in df.columns or date_col not in df.columns:
@@ -152,6 +160,7 @@ def upsert_regime_last_dates(
 
 
 def get_last_regime_date(conn: sqlite3.Connection, feature: str, ticker: str) -> str | None:
+    """Fetch the last regime date for a given feature/ticker."""
     row = conn.execute(
         "SELECT date FROM regimes_last_dates WHERE feature = ? AND ticker = ?",
         (feature, ticker),
@@ -160,6 +169,7 @@ def get_last_regime_date(conn: sqlite3.Connection, feature: str, ticker: str) ->
 
 
 def get_all_last_regime_dates(conn: sqlite3.Connection, feature: str) -> dict[str, str]:
+    """Return a dict of last regime dates for all tickers."""
     rows = conn.execute(
         "SELECT ticker, date FROM regimes_last_dates WHERE feature = ?",
         (feature,),
@@ -174,6 +184,7 @@ def write_regimes_dataset(
     existing_data_behavior: str = "overwrite_or_ignore",
     basename_template: str | None = None,
 ) -> None:
+    """Write regimes to a partitioned parquet dataset."""
     if df is None or df.empty:
         return
     base_dir.mkdir(parents=True, exist_ok=True)
@@ -207,6 +218,7 @@ def write_regimes_dataset(
 
 
 def run_regime_pipeline(existing_data_behavior: str = "overwrite_or_ignore") -> None:
+    """Run the regime computation pipeline end-to-end."""
     conn = sqlite3.connect(DB_PATH)
     init_features_db(conn)
 

@@ -30,6 +30,7 @@ DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 # ========================================================
 
 def compute_returns(df):
+    """Compute log returns from a price series or frame."""
     if df is None or df.empty:
         return pd.Series(dtype="float64")
     prices = df["adj_close"] if "adj_close" in df.columns else df.iloc[:, 0]
@@ -39,6 +40,7 @@ def compute_returns(df):
 
 prices = DATA_DIR / "parquet/prices"
 def momentum(df, batch: str = "all"):
+    """Compute rolling momentum windows over log returns."""
     batch_params = {
         "20 jours": 20,
         "3 mois": 60,
@@ -64,6 +66,7 @@ def momentum(df, batch: str = "all"):
 
 
 def trend_slope_60(df):
+    """Estimate 60-day linear trend slope of log prices."""
     if df is None or df.empty:
         return pd.Series(dtype="float64")
     prices = df["adj_close"] if "adj_close" in df.columns else df.iloc[:, 0]
@@ -80,6 +83,7 @@ def trend_slope_60(df):
 
 
 def dist_ma(df, batch: str = "all"):
+    """Compute distance to moving averages (50/200)."""
     batch_params = {
         "50 jours": 50,
         "200 jours": 200,
@@ -114,6 +118,7 @@ def dist_ma(df, batch: str = "all"):
 
 
 def volatility(df):
+    """Compute rolling volatility and related measures."""
     if df is None or df.empty:
         return pd.DataFrame(index=df.index if df is not None else None)
 
@@ -133,6 +138,7 @@ def volatility(df):
 
 
 def drawdown(df):
+    """Compute drawdown metrics over rolling windows."""
     if df is None or df.empty:
         return pd.DataFrame(index=df.index if df is not None else None)
 
@@ -151,6 +157,7 @@ def drawdown(df):
 
 
 def asymetry(df):
+    """Compute rolling skewness and kurtosis of returns."""
     if df is None or df.empty:
         return pd.DataFrame(index=df.index if df is not None else None)
 
@@ -171,6 +178,7 @@ def asymetry(df):
 
 
 def _pivot_prices_returns(df: pd.DataFrame, tickers: list[str] | None = None):
+    """Pivot long prices to wide price and return matrices."""
     if df is None or df.empty:
         return (
             pd.DataFrame(index=df.index if df is not None else None),
@@ -196,6 +204,7 @@ def _pivot_prices_returns(df: pd.DataFrame, tickers: list[str] | None = None):
 
 
 def _avg_corr_series(returns: pd.DataFrame, window: int) -> pd.Series:
+    """Compute rolling average pairwise correlation."""
     if returns is None or returns.empty:
         return pd.Series(dtype="float64")
     
@@ -217,6 +226,7 @@ def _avg_corr_series(returns: pd.DataFrame, window: int) -> pd.Series:
 
 
 def mean_corr(df: pd.DataFrame, tickers: list[str] | None = None):
+    """Compute mean correlation measures across assets."""
     if df is None or df.empty:
         return pd.DataFrame(index=df.index if df is not None else None)
     _, returns = _pivot_prices_returns(df, tickers)
@@ -228,6 +238,7 @@ def mean_corr(df: pd.DataFrame, tickers: list[str] | None = None):
 
 
 def dispersion(df: pd.DataFrame, tickers: list[str] | None = None):
+    """Compute cross-sectional return dispersion."""
     if df is None or df.empty:
         return pd.DataFrame(index=df.index if df is not None else None)
     _, returns = _pivot_prices_returns(df, tickers)
@@ -240,6 +251,7 @@ def dispersion(df: pd.DataFrame, tickers: list[str] | None = None):
 
 
 def breadth(df: pd.DataFrame, tickers: list[str] | None = None):
+    """Compute market breadth measures."""
     if df is None or df.empty:
         return pd.DataFrame(index=df.index if df is not None else None)
     prices, returns = _pivot_prices_returns(df, tickers)
@@ -257,6 +269,7 @@ def breadth(df: pd.DataFrame, tickers: list[str] | None = None):
 
 
 def correlation_shock(df: pd.DataFrame, tickers: list[str] | None = None):
+    """Compute short-vs-long average correlation spread."""
     if df is None or df.empty:
         return pd.Series(dtype="float64")
     correlation = mean_corr(df, tickers)
@@ -268,6 +281,7 @@ def correlation_shock(df: pd.DataFrame, tickers: list[str] | None = None):
 
 
 def build_market_index(df: pd.DataFrame, tickers: list[str] | None = None):
+    """Build a simple equal-weight market proxy from prices."""
     prices, _ = _pivot_prices_returns(df, tickers)
     daily_mean_prices = prices.mean(axis=1, skipna=True)
     out = pd.DataFrame(index=prices.index)
@@ -280,6 +294,7 @@ def build_market_index(df: pd.DataFrame, tickers: list[str] | None = None):
 
 
 def regime_features(df: pd.DataFrame, tickers: list[str] | None = None):
+    """Compute regime-level features from the market proxy and breadth."""
     if df is None or df.empty:
         return pd.DataFrame(index=df.index if df is not None else None)
 
@@ -349,6 +364,7 @@ def regime_features(df: pd.DataFrame, tickers: list[str] | None = None):
 
 
 def asset_features(df: pd.DataFrame, tickers: list[str] | None = None):
+    """Compute per-asset feature set for cross-sectional modeling."""
     if df is None or df.empty:
         return pd.DataFrame(index=df.index if df is not None else None)
 
@@ -439,6 +455,7 @@ def asset_features(df: pd.DataFrame, tickers: list[str] | None = None):
 
 
 def beta_idio_features(df: pd.DataFrame, mkt_returns: pd.Series, window: int = 60):
+    """Compute rolling beta and idiosyncratic volatility."""
     if df is None or df.empty or mkt_returns is None or mkt_returns.empty:
         return pd.DataFrame(index=df.index if df is not None else None)
 
@@ -461,6 +478,7 @@ def beta_idio_features(df: pd.DataFrame, mkt_returns: pd.Series, window: int = 6
 
 
 def liquidity_features(df: pd.DataFrame, window: int = 20):
+    """Compute ADV and dollar volume liquidity features."""
     if df is None or df.empty:
         return pd.DataFrame(index=df.index if df is not None else None)
 
@@ -545,6 +563,7 @@ def upsert_features(df: pd.DataFrame) -> int:
 
 
 def init_features_db(conn: sqlite3.Connection) -> None:
+    """Initialize SQLite table storing last feature dates."""
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS feature_last_dates (
@@ -568,6 +587,7 @@ def init_features_db(conn: sqlite3.Connection) -> None:
 
 
 def get_last_feature_date(conn: sqlite3.Connection, feature: str, ticker: str) -> str | None:
+    """Fetch the last feature date for a given feature/ticker."""
     row = conn.execute(
         "SELECT date FROM feature_last_dates WHERE feature = ? AND ticker = ?",
         (feature, ticker),
@@ -576,6 +596,7 @@ def get_last_feature_date(conn: sqlite3.Connection, feature: str, ticker: str) -
 
 
 def get_all_last_feature_dates(conn: sqlite3.Connection, feature: str) -> dict[str, str]:
+    """Return a dict of last feature dates for all tickers."""
     rows = conn.execute(
         "SELECT ticker, date FROM feature_last_dates WHERE feature = ?",
         (feature,),
@@ -590,6 +611,7 @@ def upsert_feature_last_dates(
     ticker_col: str = "ticker",
     date_col: str = "date",
 ) -> None:
+    """Upsert the latest available feature date per ticker."""
     if df is None or df.empty:
         return
     if ticker_col not in df.columns or date_col not in df.columns:
@@ -614,6 +636,7 @@ def upsert_feature_last_dates(
 
 
 def load_prices_dataset() -> pd.DataFrame:
+    """Load the raw prices parquet dataset."""
     dataset = ds.dataset(str(DATA_DIR / "parquet/prices"), format="parquet", partitioning="hive")
     return dataset.to_table().to_pandas()
 
@@ -625,6 +648,7 @@ def write_features_dataset(
     existing_data_behavior: str = "overwrite_or_ignore",
     basename_template: str | None = None,
 ) -> None:
+    """Write features to a partitioned parquet dataset."""
     if df is None or df.empty:
         return
     base_dir.mkdir(parents=True, exist_ok=True)
@@ -658,6 +682,7 @@ def write_features_dataset(
 
 
 def run_features_pipeline(existing_data_behavior: str = "overwrite_or_ignore") -> None:
+    """Run the feature computation pipeline end-to-end."""
     conn = sqlite3.connect(DB_PATH)
     init_features_db(conn)
 

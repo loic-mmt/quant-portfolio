@@ -23,6 +23,7 @@ CONFIG_PATH = ROOT / "config/optimize.yaml"
 
 @dataclass
 class OptimizeConfig:
+    """Configuration for the optimization pipeline."""
     rebal_freq: str
     max_weight: float
     allow_cash: bool
@@ -40,6 +41,7 @@ DEFAULT_CFG = OptimizeConfig(
 
 
 def load_optimize_config() -> OptimizeConfig:
+    """Load optimizer configuration from YAML or defaults."""
     if not CONFIG_PATH.exists():
         return DEFAULT_CFG
     content = CONFIG_PATH.read_text().strip()
@@ -66,6 +68,7 @@ def load_optimize_config() -> OptimizeConfig:
     return cfg
 
 def load_prices_dataset(tickers: list[str] | None = None) -> pd.DataFrame:
+    """Load the prices parquet dataset, optionally filtered by tickers."""
     dataset = ds.dataset(str(PRICES_DIR), format="parquet", partitioning="hive")
 
     if tickers:
@@ -83,6 +86,7 @@ def load_prices_dataset(tickers: list[str] | None = None) -> pd.DataFrame:
 
 
 def build_returns_matrix(df: pd.DataFrame) -> pd.DataFrame:
+    """Pivot prices into a returns matrix indexed by date."""
     if df is None or df.empty:
         raise ValueError("Prices data are empty.")
     required = {"date", "ticker", "adj_close"}
@@ -148,6 +152,7 @@ def build_rebalance_dates(index: pd.DatetimeIndex, freq: str) -> pd.DatetimeInde
 
 
 def load_regimes_dataset() -> pd.DataFrame:
+    """Load the regimes dataset (placeholder)."""
     # TODO: read parquet dataset from data/parquet/regimes (hive)
     # TODO: parse date column to datetime
     # TODO: return DataFrame with date, state, probabilities
@@ -155,6 +160,7 @@ def load_regimes_dataset() -> pd.DataFrame:
 
 
 def load_mc_dataset() -> pd.DataFrame:
+    """Load the MC risk dataset (placeholder)."""
     # TODO: read parquet dataset from data/parquet/mc (hive)
     # TODO: parse date column to datetime
     # TODO: return DataFrame with date, state, horizon, var/cvar/q95
@@ -162,12 +168,14 @@ def load_mc_dataset() -> pd.DataFrame:
 
 
 def get_regime_at_date(regimes: pd.DataFrame, date: pd.Timestamp) -> dict[str, float | int]:
+    """Return the regime state/probabilities at or before a date (placeholder)."""
     # TODO: select the latest regime row at or before date
     # TODO: return dict with state and probabilities
     raise NotImplementedError
 
 
 def regime_policy_from_state(state: int, cfg: OptimizeConfig) -> dict[str, float]:
+    """Map a regime state to optimization policy parameters (placeholder)."""
     # TODO: map regime state to policy parameters (e.g., max_weight, risk_scale)
     # TODO: return policy dict
     raise NotImplementedError
@@ -178,6 +186,7 @@ def apply_regime_policy(
     policy: dict[str, float],
     allow_cash: bool,
 ) -> np.ndarray:
+    """Apply regime-based policy adjustments to weights (placeholder)."""
     # TODO: apply max_weight or exposure scaling from policy
     # TODO: if allow_cash, allow sum < 1; otherwise renormalize to 1
     # TODO: return adjusted weights
@@ -189,6 +198,7 @@ def get_mc_risk_at_date(
     date: pd.Timestamp,
     horizon: int,
 ) -> dict[str, float]:
+    """Return MC risk metrics at or before a date (placeholder)."""
     # TODO: select MC summary at or before date for the chosen horizon
     # TODO: return dict with var/cvar/q95
     raise NotImplementedError
@@ -200,12 +210,14 @@ def apply_mc_overlay(
     risk_limits: dict[str, float],
     allow_cash: bool,
 ) -> np.ndarray:
+    """Apply an MC risk overlay to weights (placeholder)."""
     # TODO: compare var/cvar to thresholds
     # TODO: if risk too high, scale down exposure
     # TODO: return adjusted weights
     raise NotImplementedError
 
 def min_variance_weights(cov: np.ndarray, max_weight: float, min_weight: float) -> np.ndarray:
+    """Compute a simple inverse-variance long-only weight vector."""
     # Simple inverse-variance heuristic (long-only).
     if cov is None or cov.size == 0:
         raise ValueError("cov is empty")
@@ -224,6 +236,7 @@ def min_variance_weights(cov: np.ndarray, max_weight: float, min_weight: float) 
     return w / s
 
 def compute_covariance(returns_window: pd.DataFrame) -> tuple[np.ndarray, list[str]]:
+    """Compute covariance from a return window and list of used assets."""
     if returns_window is None or returns_window.empty:
         raise ValueError("returns window empty")
     data = returns_window.copy()
@@ -245,6 +258,7 @@ def optimize_over_time(
     rebal_dates: pd.DatetimeIndex,
     cfg: OptimizeConfig,
 ) -> pd.DataFrame:
+    """Compute weights at each rebalance date using a rolling window."""
     if returns is None or returns.empty:
         raise ValueError("returns is empty")
     if rebal_dates is None or len(rebal_dates) == 0:
@@ -292,6 +306,7 @@ def write_weights_dataset(
     run_id: str | None = None,
     existing_data_behavior: str = "overwrite_or_ignore",
 ) -> None:
+    """Write weights to a partitioned parquet dataset."""
     if weights is None or weights.empty:
         raise ValueError("weights empty")
     base_dir.mkdir(parents=True, exist_ok=True)
@@ -329,6 +344,7 @@ def run_optimize_pipeline(
     run_id: str | None = None,
     existing_data_behavior: str = "overwrite_or_ignore",
 ) -> str:
+    """Run the optimize pipeline end-to-end and return the run id."""
     config = load_optimize_config()
     prices = load_prices_dataset()
     returns = build_returns_matrix(prices)

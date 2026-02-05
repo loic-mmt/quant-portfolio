@@ -28,6 +28,7 @@ except Exception:  # pragma: no cover
 
 
 def load_regimes() -> pd.DataFrame:
+    """Load regimes dataset from parquet."""
     dataset_regime = ds.dataset(str(REGIMES_DIR), format="parquet", partitioning="hive")
     df_regime = dataset_regime.to_table().to_pandas()
     if "date" in df_regime.columns:
@@ -36,6 +37,7 @@ def load_regimes() -> pd.DataFrame:
 
 
 def load_asset_features() -> pd.DataFrame:
+    """Load per-asset features dataset from parquet."""
     dataset_assets = ds.dataset(str(FEATURES_ASSETS_DIR), format="parquet", partitioning="hive")
     df_assets = dataset_assets.to_table().to_pandas()
     if "date" in df_assets.columns:
@@ -44,6 +46,7 @@ def load_asset_features() -> pd.DataFrame:
 
 
 def load_mc_config() -> dict[str, Any]:
+    """Load Monte Carlo configuration from YAML."""
     if not CONFIG_PATH.exists():
         return {}
     content = CONFIG_PATH.read_text().strip()
@@ -57,6 +60,7 @@ def load_mc_config() -> dict[str, Any]:
 
 
 def select_universe(df_assets: pd.DataFrame, tickers: list[str] | None = None) -> pd.DataFrame:
+    """Optionally filter asset features to a ticker universe."""
     if df_assets is None or df_assets.empty:
         return pd.DataFrame(index=df_assets.index if df_assets is not None else None)
     if tickers:
@@ -65,6 +69,7 @@ def select_universe(df_assets: pd.DataFrame, tickers: list[str] | None = None) -
 
 
 def build_returns_matrix(df_prices: pd.DataFrame) -> pd.DataFrame:
+    """Pivot prices into a returns matrix indexed by date."""
     if df_prices is None or df_prices.empty:
         return pd.DataFrame()
     if "adj_close" not in df_prices.columns:
@@ -82,6 +87,7 @@ def calibrate_regime_params(
     regimes: pd.DataFrame,
     window: int,
 ) -> dict[int, dict[str, np.ndarray]]:
+    """Estimate per-regime mean and covariance from recent returns."""
     if returns is None or returns.empty:
         raise ValueError("returns is empty.")
     if regimes is None or regimes.empty:
@@ -117,6 +123,7 @@ def simulate_paths(
     horizon: int,
     dist: str = "gaussian",
 ) -> np.ndarray:
+    """Simulate multivariate return paths from Gaussian parameters."""
     if n_sims <= 0 or horizon <= 0:
         raise ValueError("n_sims and horizon must be positive.")
     if dist != "gaussian":
@@ -132,6 +139,7 @@ def simulate_paths(
 
 
 def summarize_paths(paths: np.ndarray, alpha: float = 0.05) -> dict[str, float]:
+    """Compute VaR, CVaR, and q95 summary stats from simulated paths."""
     if paths is None or len(paths) == 0:
         raise ValueError("paths is empty.")
     arr = np.asarray(paths)  # Convertit `paths` en tableau numpy (au cas où ce n’était pas déjà un ndarray).
@@ -154,6 +162,7 @@ def build_mc_outputs(
     horizons: list[int],
     dist: str,
 ) -> pd.DataFrame:
+    """Build Monte Carlo summaries for each regime/date/horizon."""
     if returns is None or returns.empty:
         return pd.DataFrame()
     if regimes is None or regimes.empty:
@@ -195,6 +204,7 @@ def write_mc_dataset(
     existing_data_behavior: str = "overwrite_or_ignore",
     basename_template: str | None = None,
 ) -> None:
+    """Write Monte Carlo summaries to a partitioned parquet dataset."""
     if df is None or df.empty:
         return
     base_dir.mkdir(parents=True, exist_ok=True)
@@ -226,6 +236,7 @@ def write_mc_dataset(
 
 
 def run_mc_pipeline(existing_data_behavior: str = "overwrite_or_ignore") -> None:
+    """Run the Monte Carlo pipeline end-to-end."""
     print("\nLoading configuration...")
     cfg = load_mc_config()
     n_sims = int(cfg.get("n_sims", 2000))
