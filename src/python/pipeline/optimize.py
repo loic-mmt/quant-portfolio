@@ -279,7 +279,16 @@ def get_mc_risk_at_date(
     """Return MC risk metrics at or before a date (placeholder)."""
     # TODO: select MC summary at or before date for the chosen horizon
     # TODO: return dict with var/cvar/q95
-    raise NotImplementedError
+    mc["date"] = pd.to_datetime(mc["date"], errors="coerce")
+    df = mc[date:(date + horizon)]
+    output = {
+        "date": df["date"],
+        "regime":df["state"],
+        "var":df["var"],
+        "cvar":df["cvar"],
+        "q95":df["q95"],
+    }
+    return output
 
 
 def apply_mc_overlay(
