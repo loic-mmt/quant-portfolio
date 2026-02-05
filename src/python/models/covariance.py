@@ -6,6 +6,8 @@ from typing import Literal
 import numpy as np
 import pandas as pd
 
+from sklearn.covariance import LedoitWolf
+
 
 @dataclass
 class CovarianceConfig:
@@ -34,6 +36,8 @@ def sample_covariance(returns: pd.DataFrame, min_periods: int = 2) -> np.ndarray
     # TODO: compute sample covariance on cleaned returns
     # TODO: handle empty or invalid input
     # TODO: return covariance as numpy array
+    if returns is None or returns.empty:
+        raise ValueError("Returns are empty.")
     _returns = clean_returns(returns, min_periods)
     cov_returns = _returns.cov()
     if cov_returns is None or cov_returns.empty:
@@ -55,10 +59,16 @@ def shrink_to_diagonal(cov: np.ndarray, shrinkage: float) -> np.ndarray:
     diag_target = cov.diagonal()
     return (1 - shrinkage) * cov + shrinkage * diag_target
 
+
+
 def ledoit_wolf_covariance(returns: pd.DataFrame) -> np.ndarray:
     # TODO: implement Ledoit-Wolf (or use sklearn if allowed)
     # TODO: return covariance as numpy array
-    raise NotImplementedError
+    if returns is None or returns.empty:
+        raise ValueError("Returns are empty.")
+    _returns = clean_returns(returns)
+    cov = LedoitWolf().fit(_returns)
+    return cov.covariance_
 
 
 def ensure_positive_definite(cov: np.ndarray, eps: float = 1e-6) -> np.ndarray:
