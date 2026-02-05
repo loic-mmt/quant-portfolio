@@ -146,6 +146,65 @@ def build_rebalance_dates(index: pd.DatetimeIndex, freq: str) -> pd.DatetimeInde
     rebal_idx = rebal_idx.unique()
     return rebal_idx
 
+
+def load_regimes_dataset() -> pd.DataFrame:
+    # TODO: read parquet dataset from data/parquet/regimes (hive)
+    # TODO: parse date column to datetime
+    # TODO: return DataFrame with date, state, probabilities
+    raise NotImplementedError
+
+
+def load_mc_dataset() -> pd.DataFrame:
+    # TODO: read parquet dataset from data/parquet/mc (hive)
+    # TODO: parse date column to datetime
+    # TODO: return DataFrame with date, state, horizon, var/cvar/q95
+    raise NotImplementedError
+
+
+def get_regime_at_date(regimes: pd.DataFrame, date: pd.Timestamp) -> dict[str, float | int]:
+    # TODO: select the latest regime row at or before date
+    # TODO: return dict with state and probabilities
+    raise NotImplementedError
+
+
+def regime_policy_from_state(state: int, cfg: OptimizeConfig) -> dict[str, float]:
+    # TODO: map regime state to policy parameters (e.g., max_weight, risk_scale)
+    # TODO: return policy dict
+    raise NotImplementedError
+
+
+def apply_regime_policy(
+    weights: np.ndarray,
+    policy: dict[str, float],
+    allow_cash: bool,
+) -> np.ndarray:
+    # TODO: apply max_weight or exposure scaling from policy
+    # TODO: if allow_cash, allow sum < 1; otherwise renormalize to 1
+    # TODO: return adjusted weights
+    raise NotImplementedError
+
+
+def get_mc_risk_at_date(
+    mc: pd.DataFrame,
+    date: pd.Timestamp,
+    horizon: int,
+) -> dict[str, float]:
+    # TODO: select MC summary at or before date for the chosen horizon
+    # TODO: return dict with var/cvar/q95
+    raise NotImplementedError
+
+
+def apply_mc_overlay(
+    weights: np.ndarray,
+    mc_summary: dict[str, float],
+    risk_limits: dict[str, float],
+    allow_cash: bool,
+) -> np.ndarray:
+    # TODO: compare var/cvar to thresholds
+    # TODO: if risk too high, scale down exposure
+    # TODO: return adjusted weights
+    raise NotImplementedError
+
 def min_variance_weights(cov: np.ndarray, max_weight: float, min_weight: float) -> np.ndarray:
     # Simple inverse-variance heuristic (long-only).
     if cov is None or cov.size == 0:
