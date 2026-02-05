@@ -19,6 +19,7 @@ DATA_DIR = ROOT / "data"
 PRICES_DIR = DATA_DIR / "parquet/prices"
 WEIGHTS_DIR = DATA_DIR / "parquet/weights"
 CONFIG_PATH = ROOT / "config/optimize.yaml"
+REGIME_DIR = DATA_DIR / "parquet/regimes"
 
 
 @dataclass
@@ -201,17 +202,21 @@ def build_rebalance_dates(index: pd.DatetimeIndex, freq: str) -> pd.DatetimeInde
 
 
 def load_regimes_dataset() -> pd.DataFrame:
-    """Load the regimes dataset (placeholder).
+    """Load the regimes parquet dataset.
 
     Returns
     -------
     pd.DataFrame
-        Empty until implemented.
+        Regimes in long format with columns: date, ticker, state, p_state_0, p_state_1, p_state_2.
     """
-    # TODO: read parquet dataset from data/parquet/regimes (hive)
-    # TODO: parse date column to datetime
-    # TODO: return DataFrame with date, state, probabilities
-    raise NotImplementedError
+    dataset = ds.dataset(str(REGIME_DIR), format="parquet", partitioning="hive")
+    table = dataset.to_table(columns = ["date", "ticker", "state", "p_state_0", "p_state_1", "p_state_2"])
+    
+    df = table.to_pandas()
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+
+    df = df.dropna(subset=["date", "ticker", "state", "p_state_0", "p_state_1", "p_state_2"]).sort_values(["date","ticker"])
+    return df
 
 
 def load_mc_dataset() -> pd.DataFrame:
