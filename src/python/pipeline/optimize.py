@@ -65,10 +65,10 @@ class OptimizeConfig:
 DEFAULT_CFG = OptimizeConfig(
     rebal_freq="W",
     max_weight=0.3,
-    allow_cash=False,
+    allow_cash=True,
     min_weight=0.01,
     lookback=10,
-    use_regimes=False,
+    use_regimes=True,
     use_mc=False,
     mc_horizon=5,
     risk_var_limit=0.05,
