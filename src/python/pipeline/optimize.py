@@ -39,12 +39,27 @@ class OptimizeConfig:
         Minimum per-asset weight floor.
     lookback : int
         Lookback window length (in rows) for covariance estimation.
+    use_regimes : bool
+        If True, apply regime-based policy adjustments.
+    use_mc : bool
+        If True, apply MC risk overlay.
+    mc_horizon : int
+        Horizon used to select MC risk summary.
+    risk_var_limit : float
+        Absolute VaR limit for overlay scaling.
+    risk_cvar_limit : float
+        Absolute CVaR limit for overlay scaling.
     """
     rebal_freq: str
     max_weight: float
     allow_cash: bool
     min_weight: float
     lookback: int
+    use_regimes: bool
+    use_mc: bool
+    mc_horizon: int
+    risk_var_limit: float
+    risk_cvar_limit: float
 
 
 DEFAULT_CFG = OptimizeConfig(
@@ -52,7 +67,12 @@ DEFAULT_CFG = OptimizeConfig(
     max_weight=0.3,
     allow_cash=False,
     min_weight=0.01,
-    lookback=10
+    lookback=10,
+    use_regimes=False,
+    use_mc=False,
+    mc_horizon=5,
+    risk_var_limit=0.05,
+    risk_cvar_limit=0.08,
 )
 
 
@@ -94,7 +114,15 @@ def load_optimize_config() -> OptimizeConfig:
 
     if not (0 <= cfg.min_weight <= cfg.max_weight <= 1):
         raise ValueError("min_weight/max_weight must satisfy 0 <= min_weight <= max_weight <= 1")
+    if cfg.lookback <= 1:
+        raise ValueError("lookback must be > 1")
+    if cfg.mc_horizon <= 0:
+        raise ValueError("mc_horizon must be > 0")
+    if cfg.risk_var_limit < 0 or cfg.risk_cvar_limit < 0:
+        raise ValueError("risk_var_limit and risk_cvar_limit must be >= 0")
     return cfg
+
+
 
 def load_prices_dataset(tickers: list[str] | None = None) -> pd.DataFrame:
     """Load the prices parquet dataset, optionally filtered by tickers.
@@ -461,6 +489,9 @@ def optimize_over_time(
     weights_rows = []
     returns = returns.sort_index()
     tickers = list(returns.columns)
+    regimes = load_regimes_dataset() if cfg.use_regimes else None
+    mc = load_mc_dataset() if cfg.use_mc else None
+    risk_limits = {"var": cfg.risk_var_limit, "cvar": cfg.risk_cvar_limit}
 
     for dt in pd.DatetimeIndex(rebal_dates):
         hist = returns.loc[:dt].tail(window)
@@ -480,6 +511,22 @@ def optimize_over_time(
         s = w_full.sum()
         if s > 0:
             w_full = w_full / s
+
+        if cfg.use_regimes:
+            try:
+                reg = get_regime_at_date(regimes, dt)
+                policy = regime_policy_from_state(reg["state"], cfg)
+                w_full = apply_regime_policy(w_full, policy, cfg.allow_cash)
+            except Exception:
+                pass
+
+        if cfg.use_mc:
+            try:
+                mc_summary = get_mc_risk_at_date(mc, dt, cfg.mc_horizon)
+                w_full = apply_mc_overlay(w_full, mc_summary, risk_limits, cfg.allow_cash)
+            except Exception:
+                pass
+
         for t, wt in zip(tickers, w_full, strict=False):
             weights_rows.append({"date": dt, "ticker": t, "weight": float(wt)})
 
