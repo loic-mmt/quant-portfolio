@@ -20,6 +20,7 @@ PRICES_DIR = DATA_DIR / "parquet/prices"
 WEIGHTS_DIR = DATA_DIR / "parquet/weights"
 CONFIG_PATH = ROOT / "config/optimize.yaml"
 REGIME_DIR = DATA_DIR / "parquet/regimes"
+MC_DIR = DATA_DIR / "parquet/mc"
 
 
 @dataclass
@@ -210,12 +211,12 @@ def load_regimes_dataset() -> pd.DataFrame:
         Regimes in long format with columns: date, ticker, state, p_state_0, p_state_1, p_state_2.
     """
     dataset = ds.dataset(str(REGIME_DIR), format="parquet", partitioning="hive")
-    table = dataset.to_table(columns = ["date", "ticker", "state", "p_state_0", "p_state_1", "p_state_2"])
+    table = dataset.to_table(columns=["date", "state", "p_state_0", "p_state_1", "p_state_2"])
     
     df = table.to_pandas()
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
 
-    df = df.dropna(subset=["date", "ticker", "state", "p_state_0", "p_state_1", "p_state_2"]).sort_values(["date","ticker"])
+    df = df.dropna(subset=["date", "state", "p_state_0", "p_state_1", "p_state_2"]).sort_values(["date"])
     return df
 
 
@@ -227,13 +228,13 @@ def load_mc_dataset() -> pd.DataFrame:
     pd.DataFrame
         Empty until implemented.
     """
-    dataset = ds.dataset(str(REGIME_DIR), format="parquet", partitioning="hive")
-    table = dataset.to_table(columns = ["date", "ticker", "state", "horizon", "var", "cvar", "q95"])
+    dataset = ds.dataset(str(MC_DIR), format="parquet", partitioning="hive")
+    table = dataset.to_table(columns=["date", "state", "horizon", "var", "cvar", "q95"])
     
     df = table.to_pandas()
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
 
-    df = df.dropna(subset=["date", "ticker", "state", "horizon", "var", "cvar", "q95"]).sort_values(["date"])
+    df = df.dropna(subset=["date", "state", "horizon", "var", "cvar", "q95"]).sort_values(["date"])
     return df
 
 
@@ -241,22 +242,35 @@ def get_regime_at_date(regimes: pd.DataFrame, date: pd.Timestamp) -> dict[str, f
     """Return the regime state/probabilities at or before a date (placeholder)."""
     # TODO: select the latest regime row at or before date
     # TODO: return dict with state and probabilities
-    regimes["date"] = pd.to_datetime(regimes["date"], errors="coerce")
-    output = {
-        "date": regimes["date"].where(regimes["date"] == date),
-        "regime":regimes["state"].where(regimes["date"] == date),
-        "p_state_0":regimes["p_state_0"].where(regimes["date"] == date),
-        "p_state_1":regimes["p_state_1"].where(regimes["date"] == date),
-        "p_state_2":regimes["p_state_2"].where(regimes["date"] == date),
+    if regimes is None or regimes.empty:
+        raise ValueError("regimes is empty")
+    df = regimes.copy()
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    df = df.dropna(subset=["date"]).sort_values("date")
+    if df.empty:
+        raise ValueError("regimes has no valid dates")
+    date = pd.to_datetime(date)
+    row = df[df["date"] <= date].tail(1)
+    if row.empty:
+        raise ValueError("no regime available at or before date")
+    r = row.iloc[0]
+    return {
+        "date": r["date"],
+        "state": int(r["state"]),
+        "p_state_0": float(r.get("p_state_0", np.nan)),
+        "p_state_1": float(r.get("p_state_1", np.nan)),
+        "p_state_2": float(r.get("p_state_2", np.nan)),
     }
-    return output
 
 
 def regime_policy_from_state(state: int, cfg: OptimizeConfig) -> dict[str, float]:
     """Map a regime state to optimization policy parameters (placeholder)."""
     # TODO: map regime state to policy parameters (e.g., max_weight, risk_scale)
     # TODO: return policy dict
-    raise NotImplementedError
+    if state is None or state.empty:
+        raise ValueError("State empty.")
+    
+
 
 
 def apply_regime_policy(
@@ -279,16 +293,26 @@ def get_mc_risk_at_date(
     """Return MC risk metrics at or before a date (placeholder)."""
     # TODO: select MC summary at or before date for the chosen horizon
     # TODO: return dict with var/cvar/q95
-    mc["date"] = pd.to_datetime(mc["date"], errors="coerce")
-    df = mc[date:(date + horizon)]
-    output = {
-        "date": df["date"],
-        "regime":df["state"],
-        "var":df["var"],
-        "cvar":df["cvar"],
-        "q95":df["q95"],
+    if mc is None or mc.empty:
+        raise ValueError("mc is empty")
+    df = mc.copy()
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    df = df.dropna(subset=["date"]).sort_values("date")
+    if df.empty:
+        raise ValueError("mc has no valid dates")
+    date = pd.to_datetime(date)
+    df = df[df["horizon"] == int(horizon)]
+    row = df[df["date"] <= date].tail(1)
+    if row.empty:
+        raise ValueError("no mc data available at or before date for this horizon")
+    r = row.iloc[0]
+    return {
+        "date": r["date"],
+        "state": int(r["state"]),
+        "var": float(r["var"]),
+        "cvar": float(r["cvar"]),
+        "q95": float(r["q95"]),
     }
-    return output
 
 
 def apply_mc_overlay(
@@ -302,6 +326,8 @@ def apply_mc_overlay(
     # TODO: if risk too high, scale down exposure
     # TODO: return adjusted weights
     raise NotImplementedError
+
+
 
 def min_variance_weights(cov: np.ndarray, max_weight: float, min_weight: float) -> np.ndarray:
     """Compute a simple inverse-variance long-only weight vector.
@@ -336,6 +362,8 @@ def min_variance_weights(cov: np.ndarray, max_weight: float, min_weight: float) 
     if s <= 0:
         raise ValueError("weights sum to zero after clipping")
     return w / s
+
+
 
 def compute_covariance(returns_window: pd.DataFrame) -> tuple[np.ndarray, list[str]]:
     """Compute covariance from a return window and list of used assets.
