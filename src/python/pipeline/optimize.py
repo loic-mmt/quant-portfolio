@@ -265,8 +265,8 @@ def regime_policy_from_state(state: int, cfg: OptimizeConfig) -> dict[str, float
     """Map a regime state to optimization policy parameters (placeholder)."""
     # TODO: map regime state to policy parameters (e.g., max_weight, risk_scale)
     # TODO: return policy dict
-    if state is None or state.empty:
-        raise ValueError("State empty.")
+    if state is None:
+        raise ValueError("state is None")
     if state == 0:
         risk_scale = 1.0
         max_weight_scale = 1.0
@@ -276,7 +276,11 @@ def regime_policy_from_state(state: int, cfg: OptimizeConfig) -> dict[str, float
     else : 
         risk_scale = 0.4
         max_weight_scale = 0.6
-    return {"risk_scale": risk_scale, "max_weight_scale": max_weight_scale}
+    return {
+        "risk_scale": risk_scale,
+        "max_weight_scale": max_weight_scale,
+        "base_max_weight": float(cfg.max_weight),
+    }
 
 
 
@@ -289,15 +293,17 @@ def apply_regime_policy(
     # TODO: apply max_weight or exposure scaling from policy
     # TODO: if allow_cash, allow sum < 1; otherwise renormalize to 1
     # TODO: return adjusted weights
-    w = np.asarray(weights, float)
-    base_max_weight = np.sum(weights)
-    w = w * policy["risk_scale"]
-    w = np.clip(w, 0.0, policy["max_weight_scale"] * base_max_weight)
+    w = np.asarray(weights, dtype=float)
+    base_max_weight = float(policy.get("base_max_weight", np.max(w) if w.size else 0.0))
+    w = w * float(policy.get("risk_scale", 1.0))
+    w = np.clip(w, 0.0, float(policy.get("max_weight_scale", 1.0)) * base_max_weight)
     if not allow_cash:
         s = w.sum()
         if s > 0:
             w = w / s
     return w
+
+
 
 def get_mc_risk_at_date(
     mc: pd.DataFrame,
@@ -337,13 +343,19 @@ def apply_mc_overlay(
     # TODO: compare var/cvar to thresholds
     # TODO: if risk too high, scale down exposure
     # TODO: return adjusted weights
+    w = np.asarray(weights, dtype=float)
     scale = 1.0
-    if mc_summary["var"] < -risk_limits["var"]:
-        scale = min(scale, risk_limits["var"] / abs(mc_summary["var"]))
-    if mc_summary["cvar"] < -risk_limits["cvar"]:
-        scale = min(scale, risk_limits["cvar"] / abs(mc_summary["cvar"]))
+    var = float(mc_summary.get("var", 0.0))
+    cvar = float(mc_summary.get("cvar", 0.0))
+    var_limit = float(risk_limits.get("var", np.inf))
+    cvar_limit = float(risk_limits.get("cvar", np.inf))
 
-    w = weights * scale
+    if var < -var_limit and var != 0.0:
+        scale = min(scale, var_limit / abs(var))
+    if cvar < -cvar_limit and cvar != 0.0:
+        scale = min(scale, cvar_limit / abs(cvar))
+
+    w = w * scale
     if not allow_cash and w.sum() > 0:
         w = w / w.sum()
     return w
