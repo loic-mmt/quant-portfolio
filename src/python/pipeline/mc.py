@@ -3,12 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 import pandas as pd
 import numpy as np
-import numpy.random as rd
-import pyarrow as pa
-import pyarrow.dataset as ds
-import sqlite3
 import time
-import shutil
+import sys
 from typing import Any
 
 
@@ -26,23 +22,13 @@ try:
 except Exception:  # pragma: no cover
     yaml = None
 
+PYTHON_ROOT = Path(__file__).resolve().parents[1]
+if str(PYTHON_ROOT) not in sys.path:
+    sys.path.insert(0, str(PYTHON_ROOT))
 
-def load_regimes() -> pd.DataFrame:
-    """Load regimes dataset from parquet."""
-    dataset_regime = ds.dataset(str(REGIMES_DIR), format="parquet", partitioning="hive")
-    df_regime = dataset_regime.to_table().to_pandas()
-    if "date" in df_regime.columns:
-        df_regime["date"] = pd.to_datetime(df_regime["date"], errors="coerce")
-    return df_regime
+from core.storage import load_prices_dataset, load_regimes_dataset, write_mc_dataset
 
 
-def load_asset_features() -> pd.DataFrame:
-    """Load per-asset features dataset from parquet."""
-    dataset_assets = ds.dataset(str(FEATURES_ASSETS_DIR), format="parquet", partitioning="hive")
-    df_assets = dataset_assets.to_table().to_pandas()
-    if "date" in df_assets.columns:
-        df_assets["date"] = pd.to_datetime(df_assets["date"], errors="coerce")
-    return df_assets
 
 
 def load_mc_config() -> dict[str, Any]:
@@ -197,44 +183,6 @@ def build_mc_outputs(
     return pd.DataFrame(rows)
 
 
-def write_mc_dataset(
-    df: pd.DataFrame,
-    base_dir: Path,
-    partition_cols: list[str],
-    existing_data_behavior: str = "overwrite_or_ignore",
-    basename_template: str | None = None,
-) -> None:
-    """Write Monte Carlo summaries to a partitioned parquet dataset."""
-    if df is None or df.empty:
-        return
-    base_dir.mkdir(parents=True, exist_ok=True)
-    if "year" not in df.columns and "date" in df.columns:
-        dt = pd.to_datetime(df["date"], errors="coerce")
-        ok = dt.notna()
-        df = df.loc[ok].copy()
-        df["year"] = dt.loc[ok].dt.year.astype("int32")
-    table = pa.Table.from_pandas(df, preserve_index=False)
-    schema = []
-    for col in partition_cols:
-        if col not in df.columns:
-            raise KeyError(f"Missing partition column: {col}")
-        if col == "year":
-            schema.append((col, pa.int32()))
-        else:
-            schema.append((col, pa.string()))
-    partitioning = ds.partitioning(pa.schema(schema), flavor="hive")
-    if existing_data_behavior == "overwrite":
-        existing_data_behavior = "delete_matching"
-    ds.write_dataset(
-        table,
-        base_dir=str(base_dir),
-        format="parquet",
-        partitioning=partitioning,
-        existing_data_behavior=existing_data_behavior,
-        basename_template=basename_template,
-    )
-
-
 def run_mc_pipeline(existing_data_behavior: str = "overwrite_or_ignore") -> None:
     """Run the Monte Carlo pipeline end-to-end."""
     print("\nLoading configuration...")
@@ -246,13 +194,12 @@ def run_mc_pipeline(existing_data_behavior: str = "overwrite_or_ignore") -> None
     tickers = cfg.get("tickers")
 
     print("\nLoading regimes...")
-    regimes = load_regimes()
+    regimes = load_regimes_dataset(REGIMES_DIR, columns=["date", "state"])
     if regimes.empty:
         raise ValueError("No regimes data available.")
 
     print("\nLoading prices...")
-    prices_ds = ds.dataset(str(PRICES_DIR), format="parquet", partitioning="hive")
-    df_prices = prices_ds.to_table().to_pandas()
+    df_prices = load_prices_dataset(PRICES_DIR, columns=["date", "ticker", "adj_close"])
     df_prices = select_universe(df_prices, tickers)
 
     print("\nBuilding returns matrix...")

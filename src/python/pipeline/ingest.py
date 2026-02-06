@@ -2,12 +2,21 @@ import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 import shutil
+import sys
 
-import numpy as np
 import pandas as pd
-import pyarrow as pa
-import pyarrow.dataset as ds
 import yfinance as yf
+
+PYTHON_ROOT = Path(__file__).resolve().parents[1]
+if str(PYTHON_ROOT) not in sys.path:
+    sys.path.insert(0, str(PYTHON_ROOT))
+
+from core.db import (
+    get_last_price_date,
+    init_prices_last_dates_db,
+    upsert_price_last_dates,
+)
+from core.storage import append_prices_dataset
 
 
 # --- Output dataset directory ---
@@ -80,35 +89,6 @@ tickers_2024 = [
 ]
 
 
-def init_db(conn: sqlite3.Connection) -> None:
-    """Create the metadata table for tracking last ingested dates."""
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS last_dates (
-          ticker     TEXT NOT NULL,
-          date       TEXT NOT NULL,  -- YYYY-MM-DD
-          open       REAL,
-          high       REAL,
-          low        REAL,
-          close      REAL,
-          adj_close  REAL,
-          volume     INTEGER,
-          PRIMARY KEY (ticker, date)
-        );
-        """
-    )
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_last_dates_ticker ON last_dates(ticker);")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_last_dates_date ON last_dates(date);")
-    conn.commit()
-
-
-def get_last_date(conn: sqlite3.Connection, ticker: str) -> str | None:
-    """Return the last ingested date (YYYY-MM-DD) for a ticker."""
-    row = conn.execute(
-        "SELECT MAX(date) FROM last_dates WHERE ticker = ?",
-        (ticker,),
-    ).fetchone()
-    return row[0]  # "YYYY-MM-DD" ou None
 
 
 def download_one(ticker: str, start: str | None, end: str | None = None) -> pd.DataFrame:
@@ -198,98 +178,15 @@ def normalize_yf(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
     return out[cols]
 
 
-def upsert_last_dates(conn: sqlite3.Connection, df: pd.DataFrame) -> str | None:
-    """Store ONLY the latest available date for this ticker in SQLite.
-
-    Returns the latest date (YYYY-MM-DD) or None.
-    """
-    if df is None or df.empty:
-        return None
-
-    df_last = df.sort_values("date").tail(1)
-    last_date = df_last.iloc[0]["date"]
-
-    sql = """
-    INSERT INTO last_dates (ticker, date, open, high, low, close, adj_close, volume)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(ticker, date) DO UPDATE SET
-      open      = excluded.open,
-      high      = excluded.high,
-      low       = excluded.low,
-      close     = excluded.close,
-      adj_close = excluded.adj_close,
-      volume    = excluded.volume;
-    """
-
-    row = (
-        df_last.iloc[0]["ticker"],
-        df_last.iloc[0]["date"],
-        float(df_last.iloc[0]["open"]) if pd.notna(df_last.iloc[0]["open"]) else None,
-        float(df_last.iloc[0]["high"]) if pd.notna(df_last.iloc[0]["high"]) else None,
-        float(df_last.iloc[0]["low"]) if pd.notna(df_last.iloc[0]["low"]) else None,
-        float(df_last.iloc[0]["close"]) if pd.notna(df_last.iloc[0]["close"]) else None,
-        float(df_last.iloc[0]["adj_close"]) if pd.notna(df_last.iloc[0]["adj_close"]) else None,
-        int(df_last.iloc[0]["volume"]) if pd.notna(df_last.iloc[0]["volume"]) else None,
-    )
-
-    conn.execute(sql, row)
-    conn.commit()
-    return last_date
-
-
-def upsert_prices(df: pd.DataFrame) -> int:
-    """Append the new batch to a Hive-partitioned Parquet dataset.
-
-    Dataset layout: data/parquet/prices/ticker=XXX/year=YYYY/*.parquet
-    """
-    if df is None or df.empty:
-        return 0
-
-    # Ensure required partition columns exist
-    if "year" not in df.columns:
-        dt = pd.to_datetime(df["date"], errors="coerce")
-        ok = dt.notna()
-        df = df.loc[ok].copy()
-        df["year"] = dt.loc[ok].dt.year.astype("int32")
-
-    table = pa.Table.from_pandas(df, preserve_index=False)
-
-    partitioning = ds.partitioning(
-        pa.schema(
-            [
-                ("ticker", pa.string()),
-                ("year", pa.int32()),
-            ]
-        ),
-        flavor="hive",
-    )
-
-    # Unique filenames per batch to avoid overwriting older fragments
-    ticker = str(df["ticker"].iloc[0])
-    dmin = str(df["date"].min())
-    dmax = str(df["date"].max())
-    basename_template = f"{ticker}_{dmin}_{dmax}_{{i}}.parquet"
-
-    ds.write_dataset(
-        table,
-        base_dir=str(out_dir),
-        format="parquet",
-        partitioning=partitioning,
-        basename_template=basename_template,
-        existing_data_behavior="overwrite_or_ignore",
-    )
-
-    return table.num_rows
-
 
 def main() -> None:
     """Run the ingestion pipeline for the static ticker list."""
     conn = sqlite3.connect(DB_PATH)
-    init_db(conn)
+    init_prices_last_dates_db(conn)
 
     total = 0
     for t in tickers_2024:
-        last = get_last_date(conn, t)
+        last = get_last_price_date(conn, t)
         if last is None:
             start = "2019-01-01"
         else:
@@ -300,8 +197,8 @@ def main() -> None:
         df = download_one(t, start=start)
         df2 = normalize_yf(df, t)
 
-        new_last = upsert_last_dates(conn, df2)
-        inserted = upsert_prices(df2)
+        new_last = upsert_price_last_dates(conn, df2)
+        inserted = append_prices_dataset(df2, out_dir)
         total += inserted
 
         print(f"{t}: last={last} start={start} -> {inserted} rows  |  New last date: {new_last}")

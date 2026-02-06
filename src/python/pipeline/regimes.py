@@ -3,11 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 import pandas as pd
 import numpy as np
-import pyarrow as pa
-import pyarrow.dataset as ds
 import sqlite3
 import time
 import shutil
+import sys
 from typing import Any
 from ..models.hmm import (
     fit_markov_market,
@@ -29,14 +28,16 @@ try:
 except Exception:
     yaml = None
 
+PYTHON_ROOT = Path(__file__).resolve().parents[1]
+if str(PYTHON_ROOT) not in sys.path:
+    sys.path.insert(0, str(PYTHON_ROOT))
 
-def load_regime_features() -> pd.DataFrame:
-    """Load regime feature dataset from parquet."""
-    dataset_regime = ds.dataset(str(FEATURES_REGIME_DIR), format="parquet", partitioning="hive")
-    df_regime = dataset_regime.to_table().to_pandas()
-    if "date" in df_regime.columns:
-        df_regime["date"] = pd.to_datetime(df_regime["date"], errors="coerce")
-    return df_regime
+from core.db import (
+    get_last_regime_date,
+    init_regime_last_dates_db,
+    upsert_regime_last_dates,
+)
+from core.storage import load_regime_features, write_regimes_dataset
 
 
 def load_regime_config() -> dict[str, Any]:
@@ -95,139 +96,17 @@ def build_regime_outputs(model, df_z: pd.DataFrame) -> pd.DataFrame:
     return pd.concat([states, proba], axis=1)
 
 
-def init_features_db(conn: sqlite3.Connection) -> None:
-    """Initialize SQLite table storing last regime dates."""
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS regimes_last_dates (
-          feature   TEXT NOT NULL,
-          ticker    TEXT NOT NULL,
-          date      TEXT NOT NULL,  -- YYYY-MM-DD
-          state     INTEGER,
-          proba     REAL,
-          PRIMARY KEY (feature, ticker)
-        );
-        """
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_regimes_last_dates_feature ON regimes_last_dates(feature);"
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_regimes_last_dates_ticker ON regimes_last_dates(ticker);"
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_regimes_last_dates_date ON regimes_last_dates(date);"
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_regimes_last_dates_state ON regimes_last_dates(state);"
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_regimes_last_dates_proba ON regimes_last_dates(proba);"
-    )
-    conn.commit()
-
-
-def upsert_regime_last_dates(
-    conn: sqlite3.Connection,
-    feature: str,
-    df: pd.DataFrame,
-    ticker_col: str = "ticker",
-    date_col: str = "date",
-) -> None:
-    """Upsert the latest available regime date per ticker."""
-    if df is None or df.empty:
-        return
-    if ticker_col not in df.columns or date_col not in df.columns:
-        missing = ", ".join(sorted({ticker_col, date_col} - set(df.columns)))
-        raise KeyError(f"Missing columns: {missing}")
-
-    dt = pd.to_datetime(df[date_col], errors="coerce")
-    ok = dt.notna()
-    df = df.loc[ok].copy()
-    df[date_col] = dt.loc[ok].dt.strftime("%Y-%m-%d")
-
-    last_by_ticker = df.groupby(ticker_col)[date_col].max()
-    sql = """
-    INSERT INTO regimes_last_dates (feature, ticker, date)
-    VALUES (?, ?, ?)
-    ON CONFLICT(feature, ticker) DO UPDATE SET
-      date = excluded.date;
-    """
-    for ticker, last_date in last_by_ticker.items():
-        conn.execute(sql, (feature, str(ticker), str(last_date)))
-    conn.commit()
-
-
-
-def get_last_regime_date(conn: sqlite3.Connection, feature: str, ticker: str) -> str | None:
-    """Fetch the last regime date for a given feature/ticker."""
-    row = conn.execute(
-        "SELECT date FROM regimes_last_dates WHERE feature = ? AND ticker = ?",
-        (feature, ticker),
-    ).fetchone()
-    return row[0] if row else None
-
-
-def get_all_last_regime_dates(conn: sqlite3.Connection, feature: str) -> dict[str, str]:
-    """Return a dict of last regime dates for all tickers."""
-    rows = conn.execute(
-        "SELECT ticker, date FROM regimes_last_dates WHERE feature = ?",
-        (feature,),
-    ).fetchall()
-    return {ticker: date for ticker, date in rows}
-
-
-def write_regimes_dataset(
-    df: pd.DataFrame,
-    base_dir: Path,
-    partition_cols: list[str],
-    existing_data_behavior: str = "overwrite_or_ignore",
-    basename_template: str | None = None,
-) -> None:
-    """Write regimes to a partitioned parquet dataset."""
-    if df is None or df.empty:
-        return
-    base_dir.mkdir(parents=True, exist_ok=True)
-
-    if "year" not in df.columns and "date" in df.columns:
-        dt = pd.to_datetime(df["date"], errors="coerce")
-        ok = dt.notna()
-        df = df.loc[ok].copy()
-        df["year"] = dt.loc[ok].dt.year.astype("int32")
-
-    table = pa.Table.from_pandas(df, preserve_index=False)
-    schema = []
-    for col in partition_cols:
-        if col not in df.columns:
-            raise KeyError(f"Missing partition column: {col}")
-        if col == "year":
-            schema.append((col, pa.int32()))
-        else:
-            schema.append((col, pa.string()))
-    partitioning = ds.partitioning(pa.schema(schema), flavor="hive")
-    if existing_data_behavior == "overwrite":
-        existing_data_behavior = "delete_matching"
-    ds.write_dataset(
-        table,
-        base_dir=str(base_dir),
-        format="parquet",
-        partitioning=partitioning,
-        existing_data_behavior=existing_data_behavior,
-        basename_template=basename_template,
-    )
-
-
 def run_regime_pipeline(existing_data_behavior: str = "overwrite_or_ignore") -> None:
     """Run the regime computation pipeline end-to-end."""
     conn = sqlite3.connect(DB_PATH)
-    init_features_db(conn)
+    init_regime_last_dates_db(conn)
 
     full_recompute = existing_data_behavior in {"overwrite", "delete_matching"}
     last_regime = get_last_regime_date(conn, "regime", "__MARKET__")
     lookback_days = 260
 
     print(f'\nLoading Features...')
-    df_regimes = load_regime_features()
+    df_regimes = load_regime_features(FEATURES_REGIME_DIR)
     if "date" in df_regimes.columns and not full_recompute and last_regime:
         cutoff = pd.to_datetime(last_regime) - pd.Timedelta(days=lookback_days)
         df_regimes = df_regimes[df_regimes["date"] >= cutoff]

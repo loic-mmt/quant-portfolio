@@ -2,16 +2,25 @@ from __future__ import annotations
 
 from dataclasses import dataclass, fields
 from pathlib import Path
+import sys
 
 import numpy as np
 import pandas as pd
-import pyarrow as pa
-import pyarrow.dataset as ds
-import time
 try:
     import yaml
 except Exception:
     yaml = None
+
+PYTHON_ROOT = Path(__file__).resolve().parents[1]
+if str(PYTHON_ROOT) not in sys.path:
+    sys.path.insert(0, str(PYTHON_ROOT))
+
+from core.storage import (
+    load_mc_dataset,
+    load_prices_dataset,
+    load_regimes_dataset,
+    write_weights_dataset,
+)
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -69,7 +78,7 @@ DEFAULT_CFG = OptimizeConfig(
     min_weight=0.01,
     lookback=10,
     use_regimes=True,
-    use_mc=False,
+    use_mc=True,
     mc_horizon=5,
     risk_var_limit=0.05,
     risk_cvar_limit=0.08,
@@ -124,33 +133,6 @@ def load_optimize_config() -> OptimizeConfig:
 
 
 
-def load_prices_dataset(tickers: list[str] | None = None) -> pd.DataFrame:
-    """Load the prices parquet dataset, optionally filtered by tickers.
-
-    Parameters
-    ----------
-    tickers : list[str] | None
-        Optional list of tickers to filter.
-
-    Returns
-    -------
-    pd.DataFrame
-        Prices in long format with columns: date, ticker, adj_close.
-    """
-    dataset = ds.dataset(str(PRICES_DIR), format="parquet", partitioning="hive")
-
-    if tickers:
-        tickers = [t.upper().strip() for t in tickers]
-        filt = ds.field("ticker").isin(tickers)
-        table = dataset.to_table(filter = filt, columns=["date", "ticker", "adj_close"])
-    else:
-        table = dataset.to_table(columns = ["date", "ticker", "adj_close"])
-    
-    df = table.to_pandas()
-    df["date"] = pd.to_datetime(df["date"], errors="coerce")
-
-    df = df.dropna(subset=["date", "ticker", "adj_close"]).sort_values(["date","ticker"])
-    return df
 
 
 def build_returns_matrix(df: pd.DataFrame) -> pd.DataFrame:
@@ -228,42 +210,6 @@ def build_rebalance_dates(index: pd.DatetimeIndex, freq: str) -> pd.DatetimeInde
     
     rebal_idx = rebal_idx.unique()
     return rebal_idx
-
-
-def load_regimes_dataset() -> pd.DataFrame:
-    """Load the regimes parquet dataset.
-
-    Returns
-    -------
-    pd.DataFrame
-        Regimes in long format with columns: date, ticker, state, p_state_0, p_state_1, p_state_2.
-    """
-    dataset = ds.dataset(str(REGIME_DIR), format="parquet", partitioning="hive")
-    table = dataset.to_table(columns=["date", "state", "p_state_0", "p_state_1", "p_state_2"])
-    
-    df = table.to_pandas()
-    df["date"] = pd.to_datetime(df["date"], errors="coerce")
-
-    df = df.dropna(subset=["date", "state", "p_state_0", "p_state_1", "p_state_2"]).sort_values(["date"])
-    return df
-
-
-def load_mc_dataset() -> pd.DataFrame:
-    """Load the MC risk dataset (placeholder).
-
-    Returns
-    -------
-    pd.DataFrame
-        Empty until implemented.
-    """
-    dataset = ds.dataset(str(MC_DIR), format="parquet", partitioning="hive")
-    table = dataset.to_table(columns=["date", "state", "horizon", "var", "cvar", "q95"])
-    
-    df = table.to_pandas()
-    df["date"] = pd.to_datetime(df["date"], errors="coerce")
-
-    df = df.dropna(subset=["date", "state", "horizon", "var", "cvar", "q95"]).sort_values(["date"])
-    return df
 
 
 def get_regime_at_date(regimes: pd.DataFrame, date: pd.Timestamp) -> dict[str, float | int]:
@@ -489,8 +435,22 @@ def optimize_over_time(
     weights_rows = []
     returns = returns.sort_index()
     tickers = list(returns.columns)
-    regimes = load_regimes_dataset() if cfg.use_regimes else None
-    mc = load_mc_dataset() if cfg.use_mc else None
+    regimes = (
+        load_regimes_dataset(
+            REGIME_DIR,
+            columns=["date", "state", "p_state_0", "p_state_1", "p_state_2"],
+        )
+        if cfg.use_regimes
+        else None
+    )
+    mc = (
+        load_mc_dataset(
+            MC_DIR,
+            columns=["date", "state", "horizon", "var", "cvar", "q95"],
+        )
+        if cfg.use_mc
+        else None
+    )
     risk_limits = {"var": cfg.risk_var_limit, "cvar": cfg.risk_cvar_limit}
 
     for dt in pd.DatetimeIndex(rebal_dates):
@@ -536,65 +496,6 @@ def optimize_over_time(
 
 
 
-def write_weights_dataset(
-    weights: pd.DataFrame,
-    base_dir: Path,
-    partition_cols: list[str],
-    run_id: str | None = None,
-    existing_data_behavior: str = "overwrite_or_ignore",
-) -> None:
-    """Write weights to a partitioned parquet dataset.
-
-    Parameters
-    ----------
-    weights : pd.DataFrame
-        Long-form weights with date/ticker/weight columns.
-    base_dir : Path
-        Root directory for the dataset.
-    partition_cols : list[str]
-        Columns used for hive-style partitioning.
-    run_id : str | None
-        Optional run identifier; defaults to a timestamp.
-    existing_data_behavior : str
-        Behavior when data already exist.
-
-    Returns
-    -------
-    None
-    """
-    if weights is None or weights.empty:
-        raise ValueError("weights empty")
-    base_dir.mkdir(parents=True, exist_ok=True)
-
-    df = weights.copy()
-    df["date"] = pd.to_datetime(df["date"], errors="coerce")
-    df = df.dropna(subset=["date", "ticker", "weight"])
-    if run_id is None:
-        run_id = str(int(time.time()))
-    df["run_id"] = str(run_id)
-    df["year"] = df["date"].dt.year.astype("int32")
-
-    table = pa.Table.from_pandas(df, preserve_index=False)
-    schema = []
-    for col in partition_cols:
-        if col not in df.columns:
-            raise KeyError(f"Missing partition column: {col}")
-        if col == "year":
-            schema.append((col, pa.int32()))
-        else:
-            schema.append((col, pa.string()))
-    partitioning = ds.partitioning(pa.schema(schema), flavor="hive")
-    if existing_data_behavior == "overwrite":
-        existing_data_behavior = "delete_matching"
-    ds.write_dataset(
-        table,
-        base_dir=str(base_dir),
-        format="parquet",
-        partitioning=partitioning,
-        existing_data_behavior=existing_data_behavior,
-    )
-    return str(run_id)
-
 def run_optimize_pipeline(
     run_id: str | None = None,
     existing_data_behavior: str = "overwrite_or_ignore",
@@ -614,7 +515,7 @@ def run_optimize_pipeline(
         The run identifier used for the output dataset.
     """
     config = load_optimize_config()
-    prices = load_prices_dataset()
+    prices = load_prices_dataset(PRICES_DIR, columns=["date", "ticker", "adj_close"])
     returns = build_returns_matrix(prices)
     rebal_dates = build_rebalance_dates(returns.index, freq=config.rebal_freq)
     weights = optimize_over_time(returns, rebal_dates, config)

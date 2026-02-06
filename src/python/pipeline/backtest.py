@@ -2,11 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, fields
 from pathlib import Path
+import sys
 
 import numpy as np
 import pandas as pd
-import pyarrow as pa
-import pyarrow.dataset as ds
 import sqlite3
 import time
 import matplotlib.pyplot as plt
@@ -25,6 +24,13 @@ try:
     import yaml
 except Exception:
     yaml = None
+
+PYTHON_ROOT = Path(__file__).resolve().parents[1]
+if str(PYTHON_ROOT) not in sys.path:
+    sys.path.insert(0, str(PYTHON_ROOT))
+
+from core.db import init_backtest_db, upsert_backtest_summary
+from core.storage import load_prices_dataset, load_weights_dataset, write_partitioned_dataset
 
 @dataclass
 class BacktestConfig:
@@ -102,70 +108,6 @@ def load_backtest_config() -> BacktestConfig:
     if cfg.transaction_bps < 0 or cfg.slippage_bps < 0:
         raise ValueError("transaction_bps and slippage_bps must be >= 0")
     return cfg
-
-
-def load_prices_dataset(tickers: list[str] | None = None) -> pd.DataFrame:
-    """Load the prices parquet dataset, optionally filtered by tickers.
-
-    Parameters
-    ----------
-    tickers : list[str] | None
-        Optional list of tickers to filter.
-
-    Returns
-    -------
-    pd.DataFrame
-        Prices in long format with columns: date, ticker, adj_close.
-    """
-    dataset = ds.dataset(str(PRICES_DIR), format="parquet", partitioning="hive")
-
-    if tickers:
-        tickers = [t.upper().strip() for t in tickers]
-        filt = ds.field("ticker").isin(tickers)
-        table = dataset.to_table(filter = filt, columns=["date", "ticker", "adj_close"])
-    else:
-        table = dataset.to_table(columns = ["date", "ticker", "adj_close"])
-    
-    df = table.to_pandas()
-    df["date"] = pd.to_datetime(df["date"], errors="coerce")
-
-    df = df.dropna(subset=["date", "ticker", "adj_close"]).sort_values(["date","ticker"])
-    return df
-
-
-def load_target_weights(run_id: str | None = None) -> pd.DataFrame:
-    """Load target weights from parquet, optionally filtered by run_id.
-
-    Parameters
-    ----------
-    run_id : str | None
-        Optional run identifier used to filter the weights dataset.
-
-    Returns
-    -------
-    pd.DataFrame
-        Long-form weights with columns: date, ticker, weight.
-    """
-    dataset = ds.dataset(str(WEIGHTS_DIR), format="parquet", partitioning="hive")
-    schema_names = set(dataset.schema.names)
-    cols = ["date", "ticker", "weight"]
-    if "run_id" in schema_names:
-        cols.append("run_id")
-    if run_id is not None:
-        if "run_id" not in schema_names:
-            raise KeyError("weights dataset has no run_id column.")
-        run_id_field = dataset.schema.field("run_id").type
-        if pa.types.is_integer(run_id_field):
-            filt = ds.field("run_id") == int(run_id)
-        else:
-            filt = ds.field("run_id") == str(run_id)
-        table = dataset.to_table(filter=filt, columns=cols)
-    else:
-        table = dataset.to_table(columns=cols)
-    df = table.to_pandas()
-    df["date"] = pd.to_datetime(df["date"], errors="coerce")
-    df = df.dropna(subset=["date", "ticker", "weight"]).sort_values(["date", "ticker"])
-    return df
 
 
 def build_returns_matrix(df: pd.DataFrame) -> pd.DataFrame:
@@ -624,64 +566,6 @@ def summarize_performance(results: pd.DataFrame) -> dict[str, float]:
     return summary
 
 
-def init_db(conn: sqlite3.Connection) -> None:
-    """Initialize the backtests metadata table in SQLite."""
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS backtests (
-          date_debut     TEXT NOT NULL,
-          date_fin       TEXT NOT NULL,  -- YYYY-MM-DD
-          CAGR                  REAL,
-          volatility            REAL,
-          Sharpe                REAL,
-          max_drawdown          REAL,
-          turnover_annualised   REAL,
-          turnover_mean         REAL,
-          turnover_vol          REAL,
-          run_id                TEXT PRIMARY KEY
-        );
-        """
-    )
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_backtests_run_id ON backtests(run_id);")
-    conn.commit()
-
-
-def upsert_summary(conn: sqlite3.Connection, summary: dict[str, float], run_id: str, date_start: str, date_end: str) -> None:
-    """Insert or update a backtest summary row for a given run id."""
-    if not summary:
-        return
-    sql = """
-    INSERT INTO backtests (
-      date_debut, date_fin, CAGR, volatility, Sharpe, max_drawdown,
-      turnover_annualised, turnover_mean, turnover_vol, run_id
-    )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(run_id) DO UPDATE SET
-      date_debut = excluded.date_debut,
-      date_fin = excluded.date_fin,
-      CAGR = excluded.CAGR,
-      volatility = excluded.volatility,
-      Sharpe = excluded.Sharpe,
-      max_drawdown = excluded.max_drawdown,
-      turnover_annualised = excluded.turnover_annualised,
-      turnover_mean = excluded.turnover_mean,
-      turnover_vol = excluded.turnover_vol;
-    """
-    row = (
-        date_start,
-        date_end,
-        float(summary.get("CAGR", np.nan)),
-        float(summary.get("volatility", np.nan)),
-        float(summary.get("Sharpe", np.nan)),
-        float(summary.get("max_drawdown", np.nan)),
-        float(summary.get("turnover_annualised", np.nan)),
-        float(summary.get("turnover_mean", np.nan)),
-        float(summary.get("turnover_vol", np.nan)),
-        str(run_id),
-    )
-    conn.execute(sql, row)
-    conn.commit()
-
 def write_backtest_outputs(
     results: pd.DataFrame,
     summary: dict[str, float],
@@ -720,29 +604,18 @@ def write_backtest_outputs(
     df["year"] = df["date"].dt.year.astype("int32")
     df["run_id"] = str(run_id)
 
-    table = pa.Table.from_pandas(df, preserve_index = False)
-    schema = []
-    for col in partition_cols :
-        if col not in df.columns:
-            raise KeyError(f"Missing partition column: {col}")
-        if col == "year":
-            schema.append((col, pa.int32()))
-        else:
-            schema.append((col, pa.string()))
-    partitioning = ds.partitioning(pa.schema(schema), flavor="hive")
-    ds.write_dataset(
-        table,
-        base_dir=str(base_dir),
-        format="parquet",
-        partitioning=partitioning,
+    write_partitioned_dataset(
+        df,
+        base_dir,
+        partition_cols,
         existing_data_behavior=existing_data_behavior,
     )
     conn = sqlite3.connect(DB_PATH)
-    init_db(conn)
+    init_backtest_db(conn)
     dates = df["date"].sort_values()
     date_start = dates.iloc[0].strftime("%Y-%m-%d")
     date_end = dates.iloc[-1].strftime("%Y-%m-%d")
-    upsert_summary(conn, summary, run_id, date_start, date_end)
+    upsert_backtest_summary(conn, summary, run_id, date_start, date_end)
     conn.close()
     return None
 
@@ -765,8 +638,8 @@ def run_backtest_pipeline(run_id: str | None = None, plot: bool = False):
         (results, baseline)
     """
     cfg = load_backtest_config()
-    prices = load_prices_dataset()
-    weights = load_target_weights(run_id)
+    prices = load_prices_dataset(PRICES_DIR, columns=["date", "ticker", "adj_close"])
+    weights = load_weights_dataset(WEIGHTS_DIR, run_id)
     returns = build_returns_matrix(prices)
     results = simulate_portfolio(returns, weights, cfg)
     baseline = compute_baseline_hold(prices, cfg)

@@ -2,12 +2,23 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 from sklearn import linear_model
-import pyarrow as pa
-import pyarrow.dataset as ds
 import shutil
 import sqlite3
+import sys
 import time
 from scipy.stats import skew, kurtosis
+
+PYTHON_ROOT = Path(__file__).resolve().parents[1]
+if str(PYTHON_ROOT) not in sys.path:
+    sys.path.insert(0, str(PYTHON_ROOT))
+
+from core.db import (
+    get_all_last_feature_dates,
+    get_last_feature_date,
+    init_feature_last_dates_db,
+    upsert_feature_last_dates,
+)
+from core.storage import load_prices_dataset, write_features_dataset
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -511,180 +522,14 @@ def liquidity_features(df: pd.DataFrame, window: int = 20):
 # ======================= Parquet ========================
 # ========================================================
 
-def upsert_features(df: pd.DataFrame) -> int:
-    """Append the new batch to a Hive-partitioned Parquet dataset.
-
-    Dataset layout: data/parquet/features/feature=ZZZ/ticker=XXX/year=YYYY/*.parquet
-    """
-    if df is None or df.empty:
-        return 0
-
-    # Ensure required partition columns exist
-    if "year" not in df.columns:
-        dt = pd.to_datetime(df["date"], errors="coerce")
-        ok = dt.notna()
-        df = df.loc[ok].copy()
-        df["year"] = dt.loc[ok].dt.year.astype("int32")
-
-    table = pa.Table.from_pandas(df, preserve_index=False)
-
-    partitioning = ds.partitioning(
-        pa.schema(
-            [
-                ("feature", pa.string()),
-                ("ticker", pa.string()),
-                ("year", pa.int32()),
-            ]
-        ),
-        flavor="hive",
-    )
-
-    # Unique filenames per batch to avoid overwriting older fragments
-    ticker = str(df["ticker"].iloc[0])
-    feature_name = str(df["feature"].iloc[0])
-    dmin = str(df["date"].min())
-    dmax = str(df["date"].max())
-    basename_template = f"{ticker}_{dmin}_{dmax}_{feature_name}_{{i}}.parquet"
-
-    ds.write_dataset(
-        table,
-        base_dir=str(out_dir),
-        format="parquet",
-        partitioning=partitioning,
-        basename_template=basename_template,
-        existing_data_behavior="overwrite_or_ignore",
-    )
-
-    return table.num_rows
-
-
 # ======================== Runner ========================
 # ========================================================
-
-
-def init_features_db(conn: sqlite3.Connection) -> None:
-    """Initialize SQLite table storing last feature dates."""
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS feature_last_dates (
-          feature   TEXT NOT NULL,
-          ticker    TEXT NOT NULL,
-          date      TEXT NOT NULL,  -- YYYY-MM-DD
-          PRIMARY KEY (feature, ticker)
-        );
-        """
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_feature_last_dates_feature ON feature_last_dates(feature);"
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_feature_last_dates_ticker ON feature_last_dates(ticker);"
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_feature_last_dates_date ON feature_last_dates(date);"
-    )
-    conn.commit()
-
-
-def get_last_feature_date(conn: sqlite3.Connection, feature: str, ticker: str) -> str | None:
-    """Fetch the last feature date for a given feature/ticker."""
-    row = conn.execute(
-        "SELECT date FROM feature_last_dates WHERE feature = ? AND ticker = ?",
-        (feature, ticker),
-    ).fetchone()
-    return row[0] if row else None
-
-
-def get_all_last_feature_dates(conn: sqlite3.Connection, feature: str) -> dict[str, str]:
-    """Return a dict of last feature dates for all tickers."""
-    rows = conn.execute(
-        "SELECT ticker, date FROM feature_last_dates WHERE feature = ?",
-        (feature,),
-    ).fetchall()
-    return {ticker: date for ticker, date in rows}
-
-
-def upsert_feature_last_dates(
-    conn: sqlite3.Connection,
-    feature: str,
-    df: pd.DataFrame,
-    ticker_col: str = "ticker",
-    date_col: str = "date",
-) -> None:
-    """Upsert the latest available feature date per ticker."""
-    if df is None or df.empty:
-        return
-    if ticker_col not in df.columns or date_col not in df.columns:
-        missing = ", ".join(sorted({ticker_col, date_col} - set(df.columns)))
-        raise KeyError(f"Missing columns: {missing}")
-
-    dt = pd.to_datetime(df[date_col], errors="coerce")
-    ok = dt.notna()
-    df = df.loc[ok].copy()
-    df[date_col] = dt.loc[ok].dt.strftime("%Y-%m-%d")
-
-    last_by_ticker = df.groupby(ticker_col)[date_col].max()
-    sql = """
-    INSERT INTO feature_last_dates (feature, ticker, date)
-    VALUES (?, ?, ?)
-    ON CONFLICT(feature, ticker) DO UPDATE SET
-      date = excluded.date;
-    """
-    for ticker, last_date in last_by_ticker.items():
-        conn.execute(sql, (feature, str(ticker), str(last_date)))
-    conn.commit()
-
-
-def load_prices_dataset() -> pd.DataFrame:
-    """Load the raw prices parquet dataset."""
-    dataset = ds.dataset(str(DATA_DIR / "parquet/prices"), format="parquet", partitioning="hive")
-    return dataset.to_table().to_pandas()
-
-
-def write_features_dataset(
-    df: pd.DataFrame,
-    base_dir: Path,
-    partition_cols: list[str],
-    existing_data_behavior: str = "overwrite_or_ignore",
-    basename_template: str | None = None,
-) -> None:
-    """Write features to a partitioned parquet dataset."""
-    if df is None or df.empty:
-        return
-    base_dir.mkdir(parents=True, exist_ok=True)
-
-    if "year" not in df.columns and "date" in df.columns:
-        dt = pd.to_datetime(df["date"], errors="coerce")
-        ok = dt.notna()
-        df = df.loc[ok].copy()
-        df["year"] = dt.loc[ok].dt.year.astype("int32")
-
-    table = pa.Table.from_pandas(df, preserve_index=False)
-    schema = []
-    for col in partition_cols:
-        if col not in df.columns:
-            raise KeyError(f"Missing partition column: {col}")
-        if col == "year":
-            schema.append((col, pa.int32()))
-        else:
-            schema.append((col, pa.string()))
-    partitioning = ds.partitioning(pa.schema(schema), flavor="hive")
-    if existing_data_behavior == "overwrite":
-        existing_data_behavior = "delete_matching"
-    ds.write_dataset(
-        table,
-        base_dir=str(base_dir),
-        format="parquet",
-        partitioning=partitioning,
-        existing_data_behavior=existing_data_behavior,
-        basename_template=basename_template,
-    )
 
 
 def run_features_pipeline(existing_data_behavior: str = "overwrite_or_ignore") -> None:
     """Run the feature computation pipeline end-to-end."""
     conn = sqlite3.connect(DB_PATH)
-    init_features_db(conn)
+    init_feature_last_dates_db(conn)
 
     full_recompute = existing_data_behavior in {"overwrite", "delete_matching"}
     lookback_days = 260
@@ -693,7 +538,7 @@ def run_features_pipeline(existing_data_behavior: str = "overwrite_or_ignore") -
     last_assets = get_all_last_feature_dates(conn, "assets")
 
     print(f'\nLoading Prices...')
-    prices = load_prices_dataset()
+    prices = load_prices_dataset(DATA_DIR / "parquet/prices", clean=False)
     if not full_recompute and (last_regime or last_assets):
         dates = [d for d in [last_regime, *last_assets.values()] if d is not None]
         if dates:
