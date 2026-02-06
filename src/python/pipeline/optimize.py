@@ -337,7 +337,17 @@ def apply_mc_overlay(
     # TODO: compare var/cvar to thresholds
     # TODO: if risk too high, scale down exposure
     # TODO: return adjusted weights
-    raise NotImplementedError
+    scale = 1.0
+    if mc_summary["var"] < -risk_limits["var"]:
+        scale = min(scale, risk_limits["var"] / abs(mc_summary["var"]))
+    if mc_summary["cvar"] < -risk_limits["cvar"]:
+        scale = min(scale, risk_limits["cvar"] / abs(mc_summary["cvar"]))
+
+    w = weights * scale
+    if not allow_cash and w.sum() > 0:
+        w = w / w.sum()
+    return w
+
 
 
 
