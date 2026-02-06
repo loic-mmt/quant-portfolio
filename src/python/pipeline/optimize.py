@@ -240,8 +240,6 @@ def load_mc_dataset() -> pd.DataFrame:
 
 def get_regime_at_date(regimes: pd.DataFrame, date: pd.Timestamp) -> dict[str, float | int]:
     """Return the regime state/probabilities at or before a date (placeholder)."""
-    # TODO: select the latest regime row at or before date
-    # TODO: return dict with state and probabilities
     if regimes is None or regimes.empty:
         raise ValueError("regimes is empty")
     df = regimes.copy()
@@ -269,7 +267,16 @@ def regime_policy_from_state(state: int, cfg: OptimizeConfig) -> dict[str, float
     # TODO: return policy dict
     if state is None or state.empty:
         raise ValueError("State empty.")
-    
+    if state == 0:
+        risk_scale = 1.0
+        max_weight_scale = 1.0
+    elif state == 1:
+        risk_scale = 0.7
+        max_weight_scale = 0.8
+    else : 
+        risk_scale = 0.4
+        max_weight_scale = 0.6
+    return {"risk_scale": risk_scale, "max_weight_scale": max_weight_scale}
 
 
 
@@ -282,8 +289,15 @@ def apply_regime_policy(
     # TODO: apply max_weight or exposure scaling from policy
     # TODO: if allow_cash, allow sum < 1; otherwise renormalize to 1
     # TODO: return adjusted weights
-    raise NotImplementedError
-
+    w = np.asarray(weights, float)
+    base_max_weight = np.sum(weights)
+    w = w * policy["risk_scale"]
+    w = np.clip(w, 0.0, policy["max_weight_scale"] * base_max_weight)
+    if not allow_cash:
+        s = w.sum()
+        if s > 0:
+            w = w / s
+    return w
 
 def get_mc_risk_at_date(
     mc: pd.DataFrame,
@@ -291,8 +305,6 @@ def get_mc_risk_at_date(
     horizon: int,
 ) -> dict[str, float]:
     """Return MC risk metrics at or before a date (placeholder)."""
-    # TODO: select MC summary at or before date for the chosen horizon
-    # TODO: return dict with var/cvar/q95
     if mc is None or mc.empty:
         raise ValueError("mc is empty")
     df = mc.copy()
