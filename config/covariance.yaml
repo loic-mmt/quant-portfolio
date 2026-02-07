@@ -1,4 +1,4 @@
 method: "ledoit_wolf"
-shrinkage: float
+shrinkage: 0.3
 min_periods: 2
-eps: float
+eps: 0.2

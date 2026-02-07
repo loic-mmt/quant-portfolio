@@ -35,9 +35,9 @@ class CovarianceConfig:
 
 DEFAULT_CFG = CovarianceConfig(
     method= "ledoit_wolf",
-    shrinkage= float,
+    shrinkage= 0.4,
     min_periods= 2,
-    eps= float,
+    eps= 0.2,
     )
 
 
