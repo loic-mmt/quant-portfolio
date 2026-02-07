@@ -21,6 +21,9 @@ from core.storage import (
     load_regimes_dataset,
     write_weights_dataset,
 )
+from models.covariance import (
+    compute_covariance,
+)
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -452,7 +455,7 @@ def min_variance_weights(cov: np.ndarray, max_weight: float, min_weight: float) 
 
 
 
-def compute_covariance(returns_window: pd.DataFrame) -> tuple[np.ndarray, list[str]]:
+def _compute_covariance(returns_window: pd.DataFrame) -> tuple[np.ndarray, list[str]]:
     """Compute covariance from a return window and list of used assets.
 
     Parameters
@@ -529,7 +532,7 @@ def optimize_over_time(
         )
         if cfg.use_mc
         else None
-    )
+    ) 
     risk_limits = {"var": cfg.risk_var_limit, "cvar": cfg.risk_cvar_limit}
 
     for dt in pd.DatetimeIndex(rebal_dates):
@@ -537,7 +540,9 @@ def optimize_over_time(
         if hist.empty:
             continue
         try:
-            cov, used_cols = compute_covariance(hist)
+            _cov, used_cols = _compute_covariance(hist)
+            cov, _ = compute_covariance(returns)
+
         except ValueError:
             continue
         w = min_variance_weights(cov, cfg.max_weight, cfg.min_weight)

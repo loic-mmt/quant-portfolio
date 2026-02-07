@@ -1,0 +1,12 @@
+rebal_freq: "W"
+max_weight: 0.3
+min_weight: 0.01
+allow_cash: false
+lookback: 60
+
+# Regime/MC integration
+use_regimes: true
+use_mc: true
+mc_horizon: 5
+risk_var_limit: 0.05
+risk_cvar_limit: 0.08

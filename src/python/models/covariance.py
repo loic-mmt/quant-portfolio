@@ -7,7 +7,10 @@ import numpy as np
 import pandas as pd
 
 from sklearn.covariance import LedoitWolf
-
+try:
+    import yaml
+except Exception:
+    yaml = None
 
 @dataclass
 class CovarianceConfig:
@@ -28,6 +31,14 @@ class CovarianceConfig:
     shrinkage: float
     min_periods: int
     eps: float
+
+
+DEFAULT_CFG = CovarianceConfig(
+    method= "ledoit_wolf",
+    shrinkage= float,
+    min_periods= 2,
+    eps= float,
+    )
 
 
 def clean_returns(returns: pd.DataFrame, min_obs: int = 2) -> pd.DataFrame:
