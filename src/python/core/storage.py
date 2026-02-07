@@ -14,13 +14,42 @@ def read_parquet_dataset(
     columns: list[str] | None = None,
     filter_expr: ds.Expression | None = None,
 ) -> pd.DataFrame:
-    """Read a Parquet dataset (hive partitioned) into a DataFrame."""
+    """Read a hive-partitioned parquet dataset into a DataFrame.
+
+    Parameters
+    ----------
+    base_dir : Path
+        Dataset root directory.
+    columns : list[str] | None
+        Optional list of columns to project.
+    filter_expr : ds.Expression | None
+        Optional Arrow dataset filter expression.
+
+    Returns
+    -------
+    pd.DataFrame
+        Materialized data as a pandas DataFrame.
+    """
     dataset = ds.dataset(str(base_dir), format="parquet", partitioning="hive")
     table = dataset.to_table(filter=filter_expr, columns=columns)
     return table.to_pandas()
 
 
 def _ensure_year_column(df: pd.DataFrame, date_col: str = "date") -> pd.DataFrame:
+    """Ensure a ``year`` partition column exists, derived from a date column.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Input DataFrame potentially missing a ``year`` column.
+    date_col : str, default "date"
+        Column used to derive ``year``.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with a valid ``year`` column when derivable.
+    """
     if "year" not in df.columns and date_col in df.columns:
         dt = pd.to_datetime(df[date_col], errors="coerce")
         ok = dt.notna()
@@ -36,7 +65,26 @@ def write_partitioned_dataset(
     existing_data_behavior: str = "overwrite_or_ignore",
     basename_template: str | None = None,
 ) -> None:
-    """Write a DataFrame to a hive-partitioned Parquet dataset."""
+    """Write a DataFrame to a hive-partitioned parquet dataset.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Data to persist.
+    base_dir : Path
+        Dataset root directory.
+    partition_cols : list[str]
+        Columns used for hive partitioning.
+    existing_data_behavior : str, default "overwrite_or_ignore"
+        Arrow behavior when matching data already exist.
+    basename_template : str | None
+        Optional template for generated parquet filenames.
+
+    Raises
+    ------
+    KeyError
+        If a requested partition column is missing from ``df``.
+    """
     if df is None or df.empty:
         return
     base_dir.mkdir(parents=True, exist_ok=True)
@@ -66,7 +114,20 @@ def write_partitioned_dataset(
 
 
 def append_prices_dataset(df: pd.DataFrame, base_dir: Path) -> int:
-    """Append a batch to the prices dataset (partitioned by ticker/year)."""
+    """Append one batch to the prices dataset (partitioned by ticker/year).
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Prices batch for one ticker/date slice.
+    base_dir : Path
+        Prices dataset root.
+
+    Returns
+    -------
+    int
+        Number of rows written.
+    """
     if df is None or df.empty:
         return 0
 
@@ -101,7 +162,22 @@ def append_prices_dataset(df: pd.DataFrame, base_dir: Path) -> int:
 
 
 def append_features_dataset(df: pd.DataFrame, base_dir: Path) -> int:
-    """Append a batch to the features dataset (partitioned by feature/ticker/year)."""
+    """Append one batch to the features dataset.
+
+    Dataset is partitioned by ``feature/ticker/year``.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Features batch to append.
+    base_dir : Path
+        Features dataset root.
+
+    Returns
+    -------
+    int
+        Number of rows written.
+    """
     if df is None or df.empty:
         return 0
 
@@ -143,7 +219,24 @@ def load_prices_dataset(
     columns: list[str] | None = None,
     clean: bool = True,
 ) -> pd.DataFrame:
-    """Load the prices parquet dataset, optionally filtered by tickers."""
+    """Load prices from parquet, optionally filtered by ticker universe.
+
+    Parameters
+    ----------
+    base_dir : Path
+        Prices dataset root.
+    tickers : list[str] | None
+        Optional ticker filter.
+    columns : list[str] | None
+        Optional projected columns.
+    clean : bool, default True
+        If True, parse date, drop required nulls, and sort.
+
+    Returns
+    -------
+    pd.DataFrame
+        Loaded prices in long format.
+    """
     dataset = ds.dataset(str(base_dir), format="parquet", partitioning="hive")
 
     filt = None
@@ -167,7 +260,20 @@ def load_prices_dataset(
 
 
 def load_weights_dataset(base_dir: Path, run_id: str | None = None) -> pd.DataFrame:
-    """Load target weights from parquet, optionally filtered by run_id."""
+    """Load target weights from parquet, optionally filtered by run id.
+
+    Parameters
+    ----------
+    base_dir : Path
+        Weights dataset root.
+    run_id : str | None
+        Optional run identifier.
+
+    Returns
+    -------
+    pd.DataFrame
+        Weights with columns ``date``, ``ticker``, ``weight`` (and maybe ``run_id``).
+    """
     dataset = ds.dataset(str(base_dir), format="parquet", partitioning="hive")
     schema_names = set(dataset.schema.names)
     cols = ["date", "ticker", "weight"]
@@ -195,6 +301,7 @@ def _load_dataset_with_date(
     base_dir: Path,
     columns: list[str] | None = None,
 ) -> pd.DataFrame:
+    """Read dataset and coerce ``date`` to datetime when present."""
     df = read_parquet_dataset(base_dir, columns=columns)
     if "date" in df.columns:
         df["date"] = pd.to_datetime(df["date"], errors="coerce")
@@ -206,7 +313,17 @@ def load_regimes_dataset(
     columns: list[str] | None = None,
     clean: bool = True,
 ) -> pd.DataFrame:
-    """Load the regimes parquet dataset."""
+    """Load regimes parquet dataset with optional cleaning.
+
+    Parameters
+    ----------
+    base_dir : Path
+        Regimes dataset root.
+    columns : list[str] | None
+        Optional projected columns.
+    clean : bool, default True
+        If True, drop null rows on selected columns and sort by date/ticker when present.
+    """
     df = _load_dataset_with_date(base_dir, columns=columns)
     if clean:
         required = [c for c in (columns or ["date"]) if c in df.columns]
@@ -223,7 +340,17 @@ def load_mc_dataset(
     columns: list[str] | None = None,
     clean: bool = True,
 ) -> pd.DataFrame:
-    """Load the MC parquet dataset."""
+    """Load Monte Carlo parquet dataset with optional cleaning.
+
+    Parameters
+    ----------
+    base_dir : Path
+        MC dataset root.
+    columns : list[str] | None
+        Optional projected columns.
+    clean : bool, default True
+        If True, drop null rows on selected columns and sort by date/ticker when present.
+    """
     df = _load_dataset_with_date(base_dir, columns=columns)
     if clean:
         required = [c for c in (columns or ["date"]) if c in df.columns]
@@ -236,12 +363,12 @@ def load_mc_dataset(
 
 
 def load_regime_features(base_dir: Path) -> pd.DataFrame:
-    """Load regime feature dataset from parquet."""
+    """Load regime features dataset and parse date column."""
     return _load_dataset_with_date(base_dir)
 
 
 def load_asset_features(base_dir: Path) -> pd.DataFrame:
-    """Load asset features dataset from parquet."""
+    """Load asset features dataset and parse date column."""
     return _load_dataset_with_date(base_dir)
 
 
@@ -252,7 +379,7 @@ def write_features_dataset(
     existing_data_behavior: str = "overwrite_or_ignore",
     basename_template: str | None = None,
 ) -> None:
-    """Write features to a partitioned parquet dataset."""
+    """Write features dataset using common partitioned writer."""
     write_partitioned_dataset(
         df,
         base_dir,
@@ -269,7 +396,7 @@ def write_regimes_dataset(
     existing_data_behavior: str = "overwrite_or_ignore",
     basename_template: str | None = None,
 ) -> None:
-    """Write regimes to a partitioned parquet dataset."""
+    """Write regimes dataset using common partitioned writer."""
     write_partitioned_dataset(
         df,
         base_dir,
@@ -286,7 +413,7 @@ def write_mc_dataset(
     existing_data_behavior: str = "overwrite_or_ignore",
     basename_template: str | None = None,
 ) -> None:
-    """Write Monte Carlo summaries to a partitioned parquet dataset."""
+    """Write Monte Carlo dataset using common partitioned writer."""
     write_partitioned_dataset(
         df,
         base_dir,
@@ -303,7 +430,26 @@ def write_weights_dataset(
     run_id: str | None = None,
     existing_data_behavior: str = "overwrite_or_ignore",
 ) -> str:
-    """Write weights to a partitioned parquet dataset."""
+    """Write weights to parquet and return the effective run id.
+
+    Parameters
+    ----------
+    weights : pd.DataFrame
+        Long-form weights with columns ``date``, ``ticker``, ``weight``.
+    base_dir : Path
+        Weights dataset root.
+    partition_cols : list[str]
+        Partition columns for dataset writing (for example ``["year", "run_id"]``).
+    run_id : str | None
+        Optional run id. If omitted, a timestamp-based id is generated.
+    existing_data_behavior : str, default "overwrite_or_ignore"
+        Arrow behavior when target partitions already exist.
+
+    Returns
+    -------
+    str
+        Run identifier written with the dataset.
+    """
     if weights is None or weights.empty:
         raise ValueError("weights empty")
 

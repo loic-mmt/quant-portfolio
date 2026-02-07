@@ -7,7 +7,18 @@ import pandas as pd
 
 
 def init_prices_last_dates_db(conn: sqlite3.Connection) -> None:
-    """Create the metadata table for tracking last ingested dates."""
+    """Create SQLite objects used to track latest ingested prices.
+
+    Parameters
+    ----------
+    conn : sqlite3.Connection
+        Open SQLite connection to the metadata database.
+
+    Returns
+    -------
+    None
+        The function creates table/indexes in-place and commits the transaction.
+    """
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS last_dates (
@@ -29,7 +40,20 @@ def init_prices_last_dates_db(conn: sqlite3.Connection) -> None:
 
 
 def get_last_price_date(conn: sqlite3.Connection, ticker: str) -> str | None:
-    """Return the last ingested date (YYYY-MM-DD) for a ticker."""
+    """Fetch the last ingested price date for one ticker.
+
+    Parameters
+    ----------
+    conn : sqlite3.Connection
+        Open SQLite connection.
+    ticker : str
+        Ticker symbol.
+
+    Returns
+    -------
+    str | None
+        Latest date in ``YYYY-MM-DD`` format, or ``None`` if no record exists.
+    """
     row = conn.execute(
         "SELECT MAX(date) FROM last_dates WHERE ticker = ?",
         (ticker,),
@@ -38,7 +62,21 @@ def get_last_price_date(conn: sqlite3.Connection, ticker: str) -> str | None:
 
 
 def upsert_price_last_dates(conn: sqlite3.Connection, df: pd.DataFrame) -> str | None:
-    """Store ONLY the latest available date for this ticker in SQLite."""
+    """Upsert the most recent OHLCV row for a ticker.
+
+    Parameters
+    ----------
+    conn : sqlite3.Connection
+        Open SQLite connection.
+    df : pd.DataFrame
+        Price rows for a single ticker with columns matching ``last_dates``
+        (ticker, date, open, high, low, close, adj_close, volume).
+
+    Returns
+    -------
+    str | None
+        Upserted latest date in ``YYYY-MM-DD`` format, or ``None`` if input is empty.
+    """
     if df is None or df.empty:
         return None
 
@@ -74,7 +112,13 @@ def upsert_price_last_dates(conn: sqlite3.Connection, df: pd.DataFrame) -> str |
 
 
 def init_feature_last_dates_db(conn: sqlite3.Connection) -> None:
-    """Initialize SQLite table storing last feature dates."""
+    """Create SQLite objects used to track latest feature dates.
+
+    Parameters
+    ----------
+    conn : sqlite3.Connection
+        Open SQLite connection to the metadata database.
+    """
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS feature_last_dates (
@@ -98,7 +142,22 @@ def init_feature_last_dates_db(conn: sqlite3.Connection) -> None:
 
 
 def get_last_feature_date(conn: sqlite3.Connection, feature: str, ticker: str) -> str | None:
-    """Fetch the last feature date for a given feature/ticker."""
+    """Fetch the latest computed date for one feature/ticker pair.
+
+    Parameters
+    ----------
+    conn : sqlite3.Connection
+        Open SQLite connection.
+    feature : str
+        Feature family name (for example ``"regime"`` or ``"assets"``).
+    ticker : str
+        Ticker identifier.
+
+    Returns
+    -------
+    str | None
+        Latest date in ``YYYY-MM-DD`` format, or ``None`` when absent.
+    """
     row = conn.execute(
         "SELECT date FROM feature_last_dates WHERE feature = ? AND ticker = ?",
         (feature, ticker),
@@ -107,7 +166,20 @@ def get_last_feature_date(conn: sqlite3.Connection, feature: str, ticker: str) -
 
 
 def get_all_last_feature_dates(conn: sqlite3.Connection, feature: str) -> dict[str, str]:
-    """Return a dict of last feature dates for all tickers."""
+    """Fetch latest feature dates for all tickers in one feature family.
+
+    Parameters
+    ----------
+    conn : sqlite3.Connection
+        Open SQLite connection.
+    feature : str
+        Feature family name.
+
+    Returns
+    -------
+    dict[str, str]
+        Mapping ``ticker -> latest_date``.
+    """
     rows = conn.execute(
         "SELECT ticker, date FROM feature_last_dates WHERE feature = ?",
         (feature,),
@@ -122,7 +194,26 @@ def upsert_feature_last_dates(
     ticker_col: str = "ticker",
     date_col: str = "date",
 ) -> None:
-    """Upsert the latest available feature date per ticker."""
+    """Upsert latest feature date per ticker for one feature family.
+
+    Parameters
+    ----------
+    conn : sqlite3.Connection
+        Open SQLite connection.
+    feature : str
+        Feature family name.
+    df : pd.DataFrame
+        Data containing ticker/date observations.
+    ticker_col : str, default "ticker"
+        Name of the ticker column in ``df``.
+    date_col : str, default "date"
+        Name of the date column in ``df``.
+
+    Raises
+    ------
+    KeyError
+        If required columns are missing.
+    """
     if df is None or df.empty:
         return
     if ticker_col not in df.columns or date_col not in df.columns:
@@ -147,7 +238,13 @@ def upsert_feature_last_dates(
 
 
 def init_regime_last_dates_db(conn: sqlite3.Connection) -> None:
-    """Initialize SQLite table storing last regime dates."""
+    """Create SQLite objects used to track latest regime dates.
+
+    Parameters
+    ----------
+    conn : sqlite3.Connection
+        Open SQLite connection to the metadata database.
+    """
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS regimes_last_dates (
@@ -185,7 +282,21 @@ def upsert_regime_last_dates(
     ticker_col: str = "ticker",
     date_col: str = "date",
 ) -> None:
-    """Upsert the latest available regime date per ticker."""
+    """Upsert latest regime date per ticker for one feature family.
+
+    Parameters
+    ----------
+    conn : sqlite3.Connection
+        Open SQLite connection.
+    feature : str
+        Regime feature namespace (typically ``"regime"``).
+    df : pd.DataFrame
+        Data containing ticker/date observations.
+    ticker_col : str, default "ticker"
+        Name of the ticker column in ``df``.
+    date_col : str, default "date"
+        Name of the date column in ``df``.
+    """
     if df is None or df.empty:
         return
     if ticker_col not in df.columns or date_col not in df.columns:
@@ -210,7 +321,22 @@ def upsert_regime_last_dates(
 
 
 def get_last_regime_date(conn: sqlite3.Connection, feature: str, ticker: str) -> str | None:
-    """Fetch the last regime date for a given feature/ticker."""
+    """Fetch the latest regime date for one feature/ticker pair.
+
+    Parameters
+    ----------
+    conn : sqlite3.Connection
+        Open SQLite connection.
+    feature : str
+        Feature family name.
+    ticker : str
+        Ticker identifier.
+
+    Returns
+    -------
+    str | None
+        Latest date in ``YYYY-MM-DD`` format, or ``None`` when absent.
+    """
     row = conn.execute(
         "SELECT date FROM regimes_last_dates WHERE feature = ? AND ticker = ?",
         (feature, ticker),
@@ -219,7 +345,20 @@ def get_last_regime_date(conn: sqlite3.Connection, feature: str, ticker: str) ->
 
 
 def get_all_last_regime_dates(conn: sqlite3.Connection, feature: str) -> dict[str, str]:
-    """Return a dict of last regime dates for all tickers."""
+    """Fetch latest regime dates for all tickers in one feature family.
+
+    Parameters
+    ----------
+    conn : sqlite3.Connection
+        Open SQLite connection.
+    feature : str
+        Feature family name.
+
+    Returns
+    -------
+    dict[str, str]
+        Mapping ``ticker -> latest_date``.
+    """
     rows = conn.execute(
         "SELECT ticker, date FROM regimes_last_dates WHERE feature = ?",
         (feature,),
@@ -228,7 +367,13 @@ def get_all_last_regime_dates(conn: sqlite3.Connection, feature: str) -> dict[st
 
 
 def init_backtest_db(conn: sqlite3.Connection) -> None:
-    """Initialize the backtests metadata table in SQLite."""
+    """Create SQLite objects used to store backtest summaries.
+
+    Parameters
+    ----------
+    conn : sqlite3.Connection
+        Open SQLite connection to the metadata database.
+    """
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS backtests (
@@ -256,7 +401,21 @@ def upsert_backtest_summary(
     date_start: str,
     date_end: str,
 ) -> None:
-    """Insert or update a backtest summary row for a given run id."""
+    """Insert or update summary metrics for one backtest run.
+
+    Parameters
+    ----------
+    conn : sqlite3.Connection
+        Open SQLite connection.
+    summary : dict[str, float]
+        Metrics dictionary (CAGR, volatility, Sharpe, drawdown, turnover stats).
+    run_id : str
+        Unique run identifier.
+    date_start : str
+        Backtest start date in ``YYYY-MM-DD`` format.
+    date_end : str
+        Backtest end date in ``YYYY-MM-DD`` format.
+    """
     if not summary:
         return
     sql = """
