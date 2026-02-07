@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, replace
 from pathlib import Path
 import sys
 
@@ -22,7 +22,8 @@ from core.storage import (
     write_weights_dataset,
 )
 from models.covariance import (
-    compute_covariance,
+    load_covariance_config,
+    compute_covariance_with_columns,
 )
 
 
@@ -455,35 +456,6 @@ def min_variance_weights(cov: np.ndarray, max_weight: float, min_weight: float) 
 
 
 
-def _compute_covariance(returns_window: pd.DataFrame) -> tuple[np.ndarray, list[str]]:
-    """Compute covariance from a return window and list of used assets.
-
-    Parameters
-    ----------
-    returns_window : pd.DataFrame
-        Returns subset used to compute covariance.
-
-    Returns
-    -------
-    tuple[np.ndarray, list[str]]
-        Covariance matrix and list of asset columns kept.
-    """
-    if returns_window is None or returns_window.empty:
-        raise ValueError("returns window empty")
-    data = returns_window.copy()
-    data = data.dropna(how="all")
-    if data.empty:
-        raise ValueError("returns window empty after dropna")
-    # Keep only columns with at least 2 non-NaN points
-    valid = data.columns[data.count() >= 2]
-    data = data[valid]
-    if data.shape[1] == 0:
-        raise ValueError("no assets with sufficient history for covariance")
-    cov = data.cov(min_periods=2).to_numpy()
-    return cov, list(valid)
-
-
-
 def optimize_over_time(
     returns: pd.DataFrame,
     rebal_dates: pd.DatetimeIndex,
@@ -534,15 +506,16 @@ def optimize_over_time(
         else None
     ) 
     risk_limits = {"var": cfg.risk_var_limit, "cvar": cfg.risk_cvar_limit}
+    cov_cfg = load_covariance_config()
+    if cov_cfg.min_periods > window:
+        cov_cfg = replace(cov_cfg, min_periods=window)
 
     for dt in pd.DatetimeIndex(rebal_dates):
         hist = returns.loc[:dt].tail(window)
         if hist.empty:
             continue
         try:
-            _cov, used_cols = _compute_covariance(hist)
-            cov, _ = compute_covariance(returns)
-
+            cov, used_cols = compute_covariance_with_columns(hist, cov_cfg)
         except ValueError:
             continue
         w = min_variance_weights(cov, cfg.max_weight, cfg.min_weight)

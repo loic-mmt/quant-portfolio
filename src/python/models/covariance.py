@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
+from pathlib import Path
 from typing import Literal
 
 import numpy as np
@@ -11,6 +12,9 @@ try:
     import yaml
 except Exception:
     yaml = None
+
+CONFIG_PATH = Path(__file__).resolve().parents[3] / "config/covariance.yaml"
+
 
 @dataclass
 class CovarianceConfig:
@@ -34,11 +38,48 @@ class CovarianceConfig:
 
 
 DEFAULT_CFG = CovarianceConfig(
-    method= "ledoit_wolf",
-    shrinkage= 0.4,
-    min_periods= 2,
-    eps= 0.2,
-    )
+    method="ledoit_wolf",
+    shrinkage=0.1,
+    min_periods=20,
+    eps=1e-6,
+)
+
+
+def load_covariance_config(path: Path | None = None) -> CovarianceConfig:
+    """Load covariance config from YAML or return defaults.
+
+    Parameters
+    ----------
+    path : Path | None
+        Optional YAML path. Defaults to config/covariance.yaml.
+    """
+    if path is None:
+        path = CONFIG_PATH
+    if not path.exists():
+        return DEFAULT_CFG
+    content = path.read_text().strip()
+    if not content:
+        return DEFAULT_CFG
+    if yaml is None:
+        raise ImportError("PyYAML is required to parse config/covariance.yaml.")
+    data = yaml.safe_load(content)
+    if not isinstance(data, dict):
+        raise ValueError("covariance.yaml must contain a YAML mapping (dict).")
+    allowed = {f.name for f in fields(CovarianceConfig)}
+    unknown = set(data.keys()) - allowed
+    if unknown:
+        raise ValueError(f"Unknown fields in covariance.yaml: {sorted(unknown)}")
+    merged = {**DEFAULT_CFG.__dict__, **data}
+    cfg = CovarianceConfig(**merged)
+    if cfg.method not in {"sample", "shrink_diag", "ledoit_wolf"}:
+        raise ValueError("method must be one of: sample, shrink_diag, ledoit_wolf")
+    if not (0.0 <= cfg.shrinkage <= 1.0):
+        raise ValueError("shrinkage must be in [0, 1].")
+    if cfg.min_periods < 2:
+        raise ValueError("min_periods must be >= 2.")
+    if cfg.eps <= 0:
+        raise ValueError("eps must be > 0.")
+    return cfg
 
 
 def clean_returns(returns: pd.DataFrame, min_obs: int = 2) -> pd.DataFrame:
@@ -227,3 +268,13 @@ def compute_covariance(
         raise ValueError(f"Unknown covariance method: {method}")
 
     return ensure_positive_definite(cov, cfg.eps)
+
+
+def compute_covariance_with_columns(
+    returns: pd.DataFrame,
+    cfg: CovarianceConfig,
+) -> tuple[np.ndarray, list[str]]:
+    """Compute covariance and return the list of columns used."""
+    cleaned = clean_returns(returns, cfg.min_periods)
+    cov = compute_covariance(cleaned, cfg)
+    return cov, list(cleaned.columns)
