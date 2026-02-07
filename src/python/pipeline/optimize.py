@@ -6,6 +6,7 @@ import sys
 
 import numpy as np
 import pandas as pd
+import cvxpy as cp
 try:
     import yaml
 except Exception:
@@ -453,6 +454,44 @@ def min_variance_weights(cov: np.ndarray, max_weight: float, min_weight: float) 
     if s <= 0:
         raise ValueError("weights sum to zero after clipping")
     return w / s
+
+def portfolio_stats(w, mu, Sigma):
+    """
+    Return (return, risk) in annual terms.
+    """
+    port_return = w @ mu
+    port_var = w.T @ Sigma @ w
+    port_risk = np.sqrt(port_var)
+    return port_return, port_risk
+
+
+def markowitz(returns, weights, cov, mode: str= "Sharpe"):
+    mu = returns.mean().values()
+    sigma = cov.values
+    n = len(returns["ticker"]).unique()
+
+    trading_days = 252
+    mu_annual = mu * trading_days
+    sigma_annual = sigma * trading_days
+
+    rf = 0.02
+    w_sharpe = cp.Variable(n)
+    port_return = mu_annual @ w_sharpe
+    port_risk = cp.quad_form(w_sharpe, sigma_annual)
+
+    constraints_sharpe = [
+        cp.sum(w_sharpe) == 1,
+        w_sharpe >= 0,
+        port_risk <= 0.25 ** 2
+    ]
+    problem_sharpe = cp.Problem(cp.Maximize(port_return - rf), constraints_sharpe)
+    problem_sharpe.solve()
+
+    w_sharpe_val = w_sharpe.value
+    ret_sharpe, risk_sharpe_val = portfolio_stats(w_sharpe_val, mu_annual, sigma_annual)
+    sharpe_ratio = (ret_sharpe - rf) / risk_sharpe_val
+    return sharpe_ratio
+
 
 
 
