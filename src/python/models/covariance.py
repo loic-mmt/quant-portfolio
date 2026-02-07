@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, replace
 from pathlib import Path
 from typing import Literal
 
@@ -70,6 +70,14 @@ def load_covariance_config(path: Path | None = None) -> CovarianceConfig:
     if unknown:
         raise ValueError(f"Unknown fields in covariance.yaml: {sorted(unknown)}")
     merged = {**DEFAULT_CFG.__dict__, **data}
+    # Coerce numeric fields from strings if needed.
+    try:
+        merged["shrinkage"] = float(merged.get("shrinkage", DEFAULT_CFG.shrinkage))
+        merged["min_periods"] = int(float(merged.get("min_periods", DEFAULT_CFG.min_periods)))
+        merged["eps"] = float(merged.get("eps", DEFAULT_CFG.eps))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Invalid numeric value in covariance.yaml: {exc}") from exc
+
     cfg = CovarianceConfig(**merged)
     if cfg.method not in {"sample", "shrink_diag", "ledoit_wolf"}:
         raise ValueError("method must be one of: sample, shrink_diag, ledoit_wolf")
@@ -77,7 +85,7 @@ def load_covariance_config(path: Path | None = None) -> CovarianceConfig:
         raise ValueError("shrinkage must be in [0, 1].")
     if cfg.min_periods < 2:
         raise ValueError("min_periods must be >= 2.")
-    if cfg.eps <= 0:
+    if float(cfg.eps) <= 0:
         raise ValueError("eps must be > 0.")
     return cfg
 
@@ -263,6 +271,8 @@ def compute_covariance(
         cov = sample_covariance(_returns, cfg.min_periods)
         cov = shrink_to_diagonal(cov, cfg.shrinkage)
     elif method == "ledoit_wolf":
+        if _returns.isna().any().any():
+            raise ValueError("LedoitWolf does not support NaNs in returns.")
         cov = ledoit_wolf_covariance(_returns)
     else:
         raise ValueError(f"Unknown covariance method: {method}")
@@ -270,11 +280,28 @@ def compute_covariance(
     return ensure_positive_definite(cov, cfg.eps)
 
 
+_FALLBACK_WARNED = False
+
+
 def compute_covariance_with_columns(
     returns: pd.DataFrame,
     cfg: CovarianceConfig,
 ) -> tuple[np.ndarray, list[str]]:
-    """Compute covariance and return the list of columns used."""
+    """Compute covariance and return the list of columns used.
+
+    Falls back to sample covariance if Ledoit-Wolf fails due to NaNs.
+    """
     cleaned = clean_returns(returns, cfg.min_periods)
-    cov = compute_covariance(cleaned, cfg)
+    global _FALLBACK_WARNED
+    try:
+        cov = compute_covariance(cleaned, cfg)
+    except ValueError as exc:
+        if cfg.method == "ledoit_wolf":
+            if not _FALLBACK_WARNED:
+                print("Warning: Ledoit-Wolf failed due to NaNs; falling back to sample covariance.")
+                _FALLBACK_WARNED = True
+            fallback_cfg = replace(cfg, method="sample")
+            cov = compute_covariance(cleaned, fallback_cfg)
+        else:
+            raise
     return cov, list(cleaned.columns)
