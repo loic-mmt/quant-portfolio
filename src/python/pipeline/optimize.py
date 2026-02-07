@@ -237,8 +237,6 @@ def get_regime_at_date(regimes: pd.DataFrame, date: pd.Timestamp) -> dict[str, f
 
 def regime_policy_from_state(state: int, cfg: OptimizeConfig) -> dict[str, float]:
     """Map a regime state to optimization policy parameters (placeholder)."""
-    # TODO: map regime state to policy parameters (e.g., max_weight, risk_scale)
-    # TODO: return policy dict
     if state is None:
         raise ValueError("state is None")
     if state == 0:
@@ -264,9 +262,6 @@ def apply_regime_policy(
     allow_cash: bool,
 ) -> np.ndarray:
     """Apply regime-based policy adjustments to weights (placeholder)."""
-    # TODO: apply max_weight or exposure scaling from policy
-    # TODO: if allow_cash, allow sum < 1; otherwise renormalize to 1
-    # TODO: return adjusted weights
     w = np.asarray(weights, dtype=float)
     base_max_weight = float(policy.get("base_max_weight", np.max(w) if w.size else 0.0))
     w = w * float(policy.get("risk_scale", 1.0))
@@ -314,9 +309,6 @@ def apply_mc_overlay(
     allow_cash: bool,
 ) -> np.ndarray:
     """Apply an MC risk overlay to weights (placeholder)."""
-    # TODO: compare var/cvar to thresholds
-    # TODO: if risk too high, scale down exposure
-    # TODO: return adjusted weights
     w = np.asarray(weights, dtype=float)
     scale = 1.0
     var = float(mc_summary.get("var", 0.0))
