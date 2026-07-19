@@ -1,0 +1,63 @@
+data_dir: data
+start_date: "2019-01-01"
+end_date: null
+log_level: INFO
+random_seed: 42
+
+# Fixed research universe. Version changes to this list with the experiment.
+tickers:
+  - PDD
+  - SDRL
+  - SMCI
+  - WHD
+  - DHT
+  - EG
+  - NFG
+  - PTEN
+  - PFS
+  - LYC.AX
+  - PRN.AX
+  - GSY.TO
+  - BCHN.SW
+  - CFR.SW
+  - DOC.VI
+  - MAIRE.MI
+  - MAP.MC
+  - RHM.DE
+  - RYAAY
+  - AEG
+  - BRNL.AS
+  - COK.DE
+  - CBK.DE
+  - DIE.BR
+  - FSKRS.HE
+  - GTT.PA
+  - GEST.MC
+  - KSB.DE
+  - SL.MI
+  - SBO.VI
+  - HO.PA
+  - FR.PA
+  - VCT.PA
+  - WAVE.PA
+  - MONY.L
+  - BEZ.L
+  - DRX.L
+  - INCH.L
+  - TBCG.L
+  - 1908.HK
+  - 3320.HK
+  - 1138.HK
+  - 2367.HK
+  - 2005.HK
+  - 1585.HK
+  - RICHTER.BD
+  - ADMIE.AT
+  - 6532.T
+  - 7267.T
+  - ELK.OL
+  - MOWI.OL
+  - SBNOR.OL
+  - BFT.WA
+  - UNIB-SDB.ST
+  - VOLCAR-B.ST

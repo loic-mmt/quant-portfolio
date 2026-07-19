@@ -1,9 +1,26 @@
 from __future__ import annotations
 
+from pathlib import Path
 import sqlite3
 
 import numpy as np
 import pandas as pd
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
+
+def initialize_metadata_db(
+    conn: sqlite3.Connection,
+    schema_path: Path | None = None,
+    views_path: Path | None = None,
+) -> None:
+    """Apply the versioned SQLite schema and idempotent views."""
+    schema = schema_path or PROJECT_ROOT / "sql/schema.sql"
+    views = views_path or PROJECT_ROOT / "sql/views.sql"
+    conn.executescript(schema.read_text(encoding="utf-8"))
+    conn.executescript(views.read_text(encoding="utf-8"))
+    conn.commit()
 
 
 def init_prices_last_dates_db(conn: sqlite3.Connection) -> None:

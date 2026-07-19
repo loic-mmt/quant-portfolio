@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Iterable
-import time
 
 import pandas as pd
 import pyarrow as pa
 import pyarrow.dataset as ds
+
+from quant_portfolio.core.ids import ensure_run_id, validate_run_id
 
 
 def read_parquet_dataset(
@@ -279,14 +280,23 @@ def load_weights_dataset(base_dir: Path, run_id: str | None = None) -> pd.DataFr
     cols = ["date", "ticker", "weight"]
     if "run_id" in schema_names:
         cols.append("run_id")
-    if run_id is not None:
+    effective_run_id = run_id
+    if effective_run_id is None and "run_id" in schema_names:
+        run_ids = dataset.to_table(columns=["run_id"]).column("run_id").to_pylist()
+        available = sorted({str(value) for value in run_ids if value is not None})
+        if not available:
+            raise ValueError("weights dataset contains no run_id values")
+        effective_run_id = available[-1]
+
+    if effective_run_id is not None:
+        effective_run_id = validate_run_id(str(effective_run_id))
         if "run_id" not in schema_names:
             raise KeyError("weights dataset has no run_id column.")
         run_id_field = dataset.schema.field("run_id").type
         if pa.types.is_integer(run_id_field):
-            filt = ds.field("run_id") == int(run_id)
+            filt = ds.field("run_id") == int(effective_run_id)
         else:
-            filt = ds.field("run_id") == str(run_id)
+            filt = ds.field("run_id") == str(effective_run_id)
         table = dataset.to_table(filter=filt, columns=cols)
     else:
         table = dataset.to_table(columns=cols)
@@ -294,6 +304,8 @@ def load_weights_dataset(base_dir: Path, run_id: str | None = None) -> pd.DataFr
     if "date" in df.columns:
         df["date"] = pd.to_datetime(df["date"], errors="coerce")
         df = df.dropna(subset=["date", "ticker", "weight"]).sort_values(["date", "ticker"])
+    if effective_run_id is not None:
+        df.attrs["run_id"] = str(effective_run_id)
     return df
 
 
@@ -456,8 +468,7 @@ def write_weights_dataset(
     df = weights.copy()
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
     df = df.dropna(subset=["date", "ticker", "weight"])
-    if run_id is None:
-        run_id = str(int(time.time()))
+    run_id = ensure_run_id(run_id, prefix="weights")
     df["run_id"] = str(run_id)
     df = _ensure_year_column(df)
 

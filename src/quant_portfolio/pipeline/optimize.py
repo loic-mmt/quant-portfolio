@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, fields, replace
 from pathlib import Path
-import sys
+import logging
 
 import numpy as np
 import pandas as pd
@@ -12,17 +12,13 @@ try:
 except Exception:
     yaml = None
 
-PYTHON_ROOT = Path(__file__).resolve().parents[1]
-if str(PYTHON_ROOT) not in sys.path:
-    sys.path.insert(0, str(PYTHON_ROOT))
-
-from core.storage import (
+from quant_portfolio.core.storage import (
     load_mc_dataset,
     load_prices_dataset,
     load_regimes_dataset,
     write_weights_dataset,
 )
-from models.covariance import (
+from quant_portfolio.models.covariance import (
     load_covariance_config,
     compute_covariance_with_columns,
 )
@@ -35,6 +31,7 @@ WEIGHTS_DIR = DATA_DIR / "parquet/weights"
 CONFIG_PATH = ROOT / "config/optimize.yaml"
 REGIME_DIR = DATA_DIR / "parquet/regimes"
 MC_DIR = DATA_DIR / "parquet/mc"
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
@@ -550,7 +547,8 @@ def optimize_over_time(
         cov_cfg = replace(cov_cfg, min_periods=window)
 
     for dt in pd.DatetimeIndex(rebal_dates):
-        hist = returns.loc[:dt].tail(window)
+        # A decision stamped at dt may only use returns fully observed before dt.
+        hist = returns.loc[returns.index < dt].tail(window)
         if hist.empty:
             continue
         try:
@@ -573,15 +571,15 @@ def optimize_over_time(
                 reg = get_regime_at_date(regimes, dt)
                 policy = regime_policy_from_state(reg["state"], cfg)
                 w_full = apply_regime_policy(w_full, policy, cfg.allow_cash)
-            except Exception:
-                pass
+            except Exception as exc:
+                LOGGER.warning("Regime overlay unavailable on %s: %s", dt.date(), exc)
 
         if cfg.use_mc:
             try:
                 mc_summary = get_mc_risk_at_date(mc, dt, cfg.mc_horizon)
                 w_full = apply_mc_overlay(w_full, mc_summary, risk_limits, cfg.allow_cash)
-            except Exception:
-                pass
+            except Exception as exc:
+                LOGGER.warning("Monte-Carlo overlay unavailable on %s: %s", dt.date(), exc)
 
         for t, wt in zip(tickers, w_full, strict=False):
             weights_rows.append({"date": dt, "ticker": t, "weight": float(wt)})
@@ -622,7 +620,7 @@ def run_optimize_pipeline(
         run_id=run_id,
         existing_data_behavior=existing_data_behavior,
     )
-    print(f"Optimize run_id: {out_run_id}")
+    LOGGER.info("Optimization complete: run_id=%s", out_run_id)
     return out_run_id
 
 

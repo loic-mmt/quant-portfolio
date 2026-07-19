@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, fields, replace
+import logging
 from pathlib import Path
 from typing import Literal
 
@@ -14,6 +15,7 @@ except Exception:
     yaml = None
 
 CONFIG_PATH = Path(__file__).resolve().parents[3] / "config/covariance.yaml"
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
@@ -298,7 +300,7 @@ def compute_covariance_with_columns(
     except ValueError as exc:
         if cfg.method == "ledoit_wolf":
             if not _FALLBACK_WARNED:
-                print("Warning: Ledoit-Wolf failed due to NaNs; falling back to sample covariance.")
+                LOGGER.warning("Ledoit-Wolf failed due to NaNs; falling back to sample covariance")
                 _FALLBACK_WARNED = True
             fallback_cfg = replace(cfg, method="sample")
             cov = compute_covariance(cleaned, fallback_cfg)

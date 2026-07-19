@@ -2,13 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, fields
 from pathlib import Path
-import sys
+import logging
 
 import numpy as np
 import pandas as pd
 import sqlite3
-import time
-import matplotlib.pyplot as plt
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -16,6 +14,7 @@ DATA_DIR = ROOT / "data"
 PRICES_DIR = DATA_DIR / "parquet/prices"
 WEIGHTS_DIR = DATA_DIR / "parquet/weights"
 BACKTEST_DIR = DATA_DIR / "parquet/backtests"
+TRADES_DIR = DATA_DIR / "parquet/trades"
 DB_PATH = DATA_DIR / "_meta.db"
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 CONFIG_PATH = ROOT / "config/backtest.yaml"
@@ -25,12 +24,11 @@ try:
 except Exception:
     yaml = None
 
-PYTHON_ROOT = Path(__file__).resolve().parents[1]
-if str(PYTHON_ROOT) not in sys.path:
-    sys.path.insert(0, str(PYTHON_ROOT))
+from quant_portfolio.core.db import init_backtest_db, upsert_backtest_summary
+from quant_portfolio.core.ids import ensure_run_id
 
-from core.db import init_backtest_db, upsert_backtest_summary
-from core.storage import load_prices_dataset, load_weights_dataset, write_partitioned_dataset
+
+LOGGER = logging.getLogger(__name__)
 
 @dataclass
 class BacktestConfig:
@@ -54,13 +52,25 @@ class BacktestConfig:
     slippage_bps: float
     turnover_cap: float | None
     initial_capital: float
+    cash_rate_annual: float
+    execution_lag_days: int
+    return_type: str
+    missing_return_policy: str
+    start_date: str | None
+    end_date: str | None
 
 DEFAULT_CFG = BacktestConfig(
     rebal_freq="W",
     transaction_bps= 1.0,
     slippage_bps=2.0,
     turnover_cap=None,
-    initial_capital=100_000.0
+    initial_capital=100_000.0,
+    cash_rate_annual=0.0,
+    execution_lag_days=1,
+    return_type="simple",
+    missing_return_policy="cash",
+    start_date=None,
+    end_date=None,
 )
 
 def load_backtest_config() -> BacktestConfig:
@@ -107,10 +117,21 @@ def load_backtest_config() -> BacktestConfig:
         raise ValueError("initial_capital must be > 0")
     if cfg.transaction_bps < 0 or cfg.slippage_bps < 0:
         raise ValueError("transaction_bps and slippage_bps must be >= 0")
+    if cfg.turnover_cap is not None and not 0 <= float(cfg.turnover_cap) <= 1:
+        raise ValueError("turnover_cap must be between 0 and 1 or null")
+    if int(cfg.execution_lag_days) < 1:
+        raise ValueError("execution_lag_days must be >= 1 to prevent same-day look-ahead")
+    if cfg.return_type not in {"simple", "log"}:
+        raise ValueError("return_type must be 'simple' or 'log'")
+    if cfg.missing_return_policy not in {"cash", "zero", "error"}:
+        raise ValueError("missing_return_policy must be cash, zero or error")
+    if cfg.start_date and cfg.end_date:
+        if pd.Timestamp(cfg.start_date) > pd.Timestamp(cfg.end_date):
+            raise ValueError("start_date must be <= end_date")
     return cfg
 
 
-def build_returns_matrix(df: pd.DataFrame) -> pd.DataFrame:
+def build_returns_matrix(df: pd.DataFrame, return_type: str = "simple") -> pd.DataFrame:
     """Pivot prices into a returns matrix indexed by date.
 
     Parameters
@@ -121,7 +142,7 @@ def build_returns_matrix(df: pd.DataFrame) -> pd.DataFrame:
     Returns
     -------
     pd.DataFrame
-        Log returns with dates as index and tickers as columns.
+        Returns with dates as index and tickers as columns.
     """
     if df is None or df.empty:
         raise ValueError("Prices data are empty.")
@@ -134,7 +155,12 @@ def build_returns_matrix(df: pd.DataFrame) -> pd.DataFrame:
     data = data.dropna(subset=["date"])
 
     prices = (data.pivot_table(index="date", columns="ticker", values="adj_close", aggfunc="last").sort_index())
-    returns = np.log(prices / prices.shift(1))
+    if return_type == "simple":
+        returns = prices.pct_change(fill_method=None)
+    elif return_type == "log":
+        returns = np.log(prices / prices.shift(1))
+    else:
+        raise ValueError("return_type must be 'simple' or 'log'")
     returns = returns.dropna(how = "all")
     return returns
 
@@ -241,7 +267,12 @@ def align_weights_to_dates(
     return W
 
 
-def compute_turnover(prev_w: np.ndarray, next_w: np.ndarray) -> float:
+def compute_turnover(
+    prev_w: np.ndarray,
+    next_w: np.ndarray,
+    prev_cash: float | None = None,
+    next_cash: float | None = None,
+) -> float:
     """Compute one-way turnover between two weight vectors.
 
     Turnover is defined as 0.5 * sum(|w_t - w_{t-1}|).
@@ -251,7 +282,12 @@ def compute_turnover(prev_w: np.ndarray, next_w: np.ndarray) -> float:
 
     if prev_w.shape != next_w.shape:
         raise ValueError(f"Shape mismatch: prev_w {prev_w.shape} vs next_w {next_w.shape}")
-    turnover = 0.5 * np.sum(np.abs(next_w - prev_w))
+    absolute_change = float(np.sum(np.abs(next_w - prev_w)))
+    if (prev_cash is None) != (next_cash is None):
+        raise ValueError("prev_cash and next_cash must be provided together")
+    if prev_cash is not None and next_cash is not None:
+        absolute_change += abs(float(next_cash) - float(prev_cash))
+    turnover = 0.5 * absolute_change
     return float(turnover)
 
 
@@ -259,6 +295,8 @@ def apply_turnover_cap(
     prev_w: np.ndarray,
     next_w: np.ndarray,
     cap: float | None,
+    prev_cash: float | None = None,
+    next_cash: float | None = None,
 ) -> np.ndarray:
     """Cap turnover by shrinking moves toward target weights.
 
@@ -277,7 +315,7 @@ def apply_turnover_cap(
     if cap < 0:
         raise ValueError("cap must be >= 0 or None")
 
-    turnover = compute_turnover(prev_w, next_w)
+    turnover = compute_turnover(prev_w, next_w, prev_cash, next_cash)
     if turnover <= cap:
         return next_w
 
@@ -285,6 +323,68 @@ def apply_turnover_cap(
     capped_w = prev_w + alpha * (next_w - prev_w)
 
     return capped_w
+
+
+def build_target_weight_matrix(
+    target_weights: pd.DataFrame,
+    tickers: list[str],
+) -> pd.DataFrame:
+    """Validate long-only target weights and pivot them by decision date."""
+    if target_weights is None or target_weights.empty:
+        raise ValueError("target_weights is empty")
+    required = {"date", "ticker", "weight"}
+    missing = required - set(target_weights.columns)
+    if missing:
+        raise KeyError(f"Missing required columns: {sorted(missing)}")
+
+    frame = target_weights.copy()
+    frame["date"] = pd.to_datetime(frame["date"], errors="coerce")
+    frame["weight"] = pd.to_numeric(frame["weight"], errors="coerce")
+    frame = frame.dropna(subset=["date", "ticker", "weight"])
+    if frame.empty:
+        raise ValueError("target_weights has no valid observations")
+    if (frame["weight"] < -1e-12).any():
+        raise ValueError("negative target weights are not allowed")
+
+    matrix = frame.pivot_table(
+        index="date",
+        columns="ticker",
+        values="weight",
+        aggfunc="last",
+    ).sort_index()
+    matrix = matrix.reindex(columns=tickers).fillna(0.0).clip(lower=0.0)
+    exposure = matrix.sum(axis=1)
+    if (exposure > 1.0 + 1e-10).any():
+        bad_date = exposure[exposure > 1.0 + 1e-10].index[0]
+        raise ValueError(f"target exposure exceeds 1.0 on {bad_date:%Y-%m-%d}")
+    return matrix
+
+
+def build_execution_schedule(
+    decision_weights: pd.DataFrame,
+    trading_dates: pd.DatetimeIndex,
+    lag_days: int,
+) -> dict[pd.Timestamp, tuple[pd.Timestamp, np.ndarray]]:
+    """Map each decision to a strictly later trading date.
+
+    ``lag_days=1`` means the first available trading day after the decision.
+    When multiple decisions map to the same execution date, the latest decision wins.
+    """
+    if lag_days < 1:
+        raise ValueError("lag_days must be >= 1")
+    dates = pd.DatetimeIndex(trading_dates).sort_values().unique()
+    schedule: dict[pd.Timestamp, tuple[pd.Timestamp, np.ndarray]] = {}
+    for decision_date, row in decision_weights.sort_index().iterrows():
+        first_strictly_after = int(dates.searchsorted(pd.Timestamp(decision_date), side="right"))
+        execution_position = first_strictly_after + lag_days - 1
+        if execution_position >= len(dates):
+            continue
+        execution_date = pd.Timestamp(dates[execution_position])
+        schedule[execution_date] = (
+            pd.Timestamp(decision_date),
+            row.to_numpy(dtype=float),
+        )
+    return schedule
 
 
 
@@ -323,7 +423,8 @@ def simulate_portfolio(
     returns: pd.DataFrame,
     target_weights: pd.DataFrame,
     cfg: BacktestConfig,
-) -> pd.DataFrame:
+    return_details: bool = False,
+) -> pd.DataFrame | tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Simulate portfolio value and returns with periodic rebalancing.
 
     Parameters
@@ -343,65 +444,162 @@ def simulate_portfolio(
     
     if returns is None or returns.empty:
          raise ValueError("returns is empty")
-    tickers = list(returns.columns)
-    dates = pd.DatetimeIndex(returns.index).sort_values()
+    data = returns.copy().sort_index()
+    data.index = pd.DatetimeIndex(pd.to_datetime(data.index))
+    if cfg.start_date:
+        data = data.loc[data.index >= pd.Timestamp(cfg.start_date)]
+    if cfg.end_date:
+        data = data.loc[data.index <= pd.Timestamp(cfg.end_date)]
+    if data.empty:
+        raise ValueError("returns is empty after applying the configured date range")
 
-    rebal_dates = build_rebalance_dates(dates, freq=cfg.rebal_freq)
+    tickers = [str(column) for column in data.columns]
+    dates = pd.DatetimeIndex(data.index)
+    decisions = build_target_weight_matrix(target_weights, tickers)
+    schedule = build_execution_schedule(decisions, dates, int(cfg.execution_lag_days))
 
-    W_target = align_weights_to_dates(target_weights, rebal_dates, tickers)
+    value = float(cfg.initial_capital)
+    risky_weights = np.zeros(len(tickers), dtype=float)
+    cash_weight = 1.0
+    daily_cash_return = (1.0 + float(cfg.cash_rate_annual)) ** (1.0 / 252.0) - 1.0
 
-    V = float(cfg.initial_capital)
-    w = W_target.iloc[0].to_numpy(dtype=float) # poids initial
-    w = w / w.sum() if w.sum() > 1.0 else w
+    result_rows: list[dict[str, object]] = []
+    trade_rows: list[dict[str, object]] = []
+    position_rows: list[dict[str, object]] = []
 
-    port_value = []
-    port_ret = []
-    turnover_list = []
-    cost_list = []
-    is_rebal = []
+    for date in dates:
+        start_value = value
+        turnover = 0.0
+        cost_rate = 0.0
+        cost_amount = 0.0
+        decision_date: pd.Timestamp | None = None
+        executed = False
 
-    rebal_set = set(pd.DatetimeIndex(rebal_dates))
+        scheduled = schedule.get(pd.Timestamp(date))
+        if scheduled is not None:
+            decision_date, requested_weights = scheduled
+            requested_cash = max(0.0, 1.0 - float(requested_weights.sum()))
+            executed_weights = apply_turnover_cap(
+                risky_weights,
+                requested_weights,
+                cfg.turnover_cap,
+                prev_cash=cash_weight,
+                next_cash=requested_cash,
+            )
+            executed_cash = max(0.0, 1.0 - float(executed_weights.sum()))
+            turnover = compute_turnover(
+                risky_weights,
+                executed_weights,
+                cash_weight,
+                executed_cash,
+            )
+            cost_rate = estimate_transaction_costs(
+                turnover,
+                cfg.transaction_bps,
+                cfg.slippage_bps,
+            )
+            if cost_rate >= 1.0:
+                raise ValueError("transaction costs consume the entire portfolio")
+            cost_amount = start_value * cost_rate
+            value = start_value - cost_amount
 
-    for dt in dates :
-        turnover = 0
-        cost = 0
-        rebalanced = False
+            deltas = executed_weights - risky_weights
+            for ticker, delta in zip(tickers, deltas, strict=False):
+                if abs(float(delta)) <= 1e-14:
+                    continue
+                trade_rows.append(
+                    {
+                        "decision_date": decision_date,
+                        "execution_date": pd.Timestamp(date),
+                        "ticker": ticker,
+                        "side": "BUY" if delta > 0 else "SELL",
+                        "delta_weight": float(delta),
+                        "notional": float(delta * value),
+                    }
+                )
+            cash_delta = executed_cash - cash_weight
+            if abs(cash_delta) > 1e-14:
+                trade_rows.append(
+                    {
+                        "decision_date": decision_date,
+                        "execution_date": pd.Timestamp(date),
+                        "ticker": "__CASH__",
+                        "side": "CASH_IN" if cash_delta > 0 else "CASH_OUT",
+                        "delta_weight": float(cash_delta),
+                        "notional": float(cash_delta * value),
+                    }
+                )
+            risky_weights = executed_weights
+            cash_weight = executed_cash
+            executed = True
 
-        if dt in rebal_set:
-            target_w = W_target.loc[dt].to_numpy(dtype=float)
-            turnover = compute_turnover(w, target_w) # turnover vs current weight
-            capped_w = apply_turnover_cap(w, target_w, cfg.turnover_cap)
-            turnover = compute_turnover(w, capped_w)
-            cost = estimate_transaction_costs(turnover, cfg.transaction_bps, cfg.slippage_bps)
+        raw_returns = data.loc[date].to_numpy(dtype=float)
+        simple_returns = np.expm1(raw_returns) if cfg.return_type == "log" else raw_returns.copy()
+        held_missing = np.isnan(simple_returns) & (risky_weights > 1e-14)
+        if held_missing.any() and cfg.missing_return_policy == "error":
+            missing_tickers = [ticker for ticker, flag in zip(tickers, held_missing, strict=False) if flag]
+            raise ValueError(f"missing returns for held assets on {date}: {missing_tickers}")
+        replacement = daily_cash_return if cfg.missing_return_policy == "cash" else 0.0
+        simple_returns = np.where(np.isnan(simple_returns), replacement, simple_returns)
 
-            V *= (1.0 - cost)
+        gross_return = float(risky_weights @ simple_returns + cash_weight * daily_cash_return)
+        growth = 1.0 + gross_return
+        if growth <= 0:
+            raise ValueError(f"portfolio value became non-positive on {date}")
+        value *= growth
+        net_return = value / start_value - 1.0
 
-            w = capped_w
-            rebalanced = True
-        # daily portfolio return
-        r_vec = returns.loc[dt].to_numpy(dtype=float)
-        r_p = float(np.nansum(w * r_vec)) # sum of weighted returns
+        risky_weights = risky_weights * (1.0 + simple_returns) / growth
+        cash_weight = cash_weight * (1.0 + daily_cash_return) / growth
+        total_weight = float(risky_weights.sum() + cash_weight)
+        if total_weight <= 0:
+            raise ValueError("portfolio weights sum to zero after drift")
+        risky_weights /= total_weight
+        cash_weight /= total_weight
 
-        # update value
-        V *= (1.0 + r_p)
+        result_rows.append(
+            {
+                "date": pd.Timestamp(date),
+                "portfolio_value": float(value),
+                "portfolio_return": float(net_return),
+                "gross_return": gross_return,
+                "turnover": turnover,
+                "cost": cost_rate,
+                "cost_amount": cost_amount,
+                "is_rebalance": executed,
+                "decision_date": decision_date,
+                "cash_weight": float(cash_weight),
+                "gross_exposure": float(risky_weights.sum()),
+            }
+        )
+        for ticker, weight in zip(tickers, risky_weights, strict=False):
+            position_rows.append(
+                {
+                    "date": pd.Timestamp(date),
+                    "ticker": ticker,
+                    "weight": float(weight),
+                    "value": float(weight * value),
+                    "is_cash": False,
+                }
+            )
+        position_rows.append(
+            {
+                "date": pd.Timestamp(date),
+                "ticker": "__CASH__",
+                "weight": float(cash_weight),
+                "value": float(cash_weight * value),
+                "is_cash": True,
+            }
+        )
 
-        port_value.append(V)
-        port_ret.append(r_p)
-        turnover_list.append(turnover)
-        cost_list.append(cost)
-        is_rebal.append(rebalanced)
-    
-    results = pd.DataFrame(
-        {
-            "portfolio_value": port_value,
-            "portfolio_return": port_ret,
-            "turnover": turnover_list,
-            "cost": cost_list,
-            "is_rebalance": is_rebal,
-        },
-        index=dates
-    )
+    results = pd.DataFrame(result_rows).set_index("date")
     results["pnl"] = results["portfolio_value"] - cfg.initial_capital
+    results.attrs["initial_capital"] = float(cfg.initial_capital)
+    results.attrs["execution_lag_days"] = int(cfg.execution_lag_days)
+    trades = pd.DataFrame(trade_rows)
+    positions = pd.DataFrame(position_rows)
+    if return_details:
+        return results, trades, positions
     return results
 
 
@@ -425,6 +623,12 @@ def compute_baseline_hold(prices: pd.DataFrame, cfg: BacktestConfig) -> pd.DataF
         .sort_index()
     )
     price_matrix = price_matrix.dropna(how="all")
+    if cfg.start_date:
+        price_matrix = price_matrix.loc[price_matrix.index >= pd.Timestamp(cfg.start_date)]
+    if cfg.end_date:
+        price_matrix = price_matrix.loc[price_matrix.index <= pd.Timestamp(cfg.end_date)]
+    if price_matrix.empty:
+        raise ValueError("price_matrix is empty after applying the configured date range")
     # Choose baseline universe as tickers available on the first date.
     first_date = price_matrix.index.min()
     first_row = price_matrix.loc[first_date]
@@ -490,6 +694,8 @@ def plot_backtest_vs_baseline(
         if "portfolio_value" not in df.columns:
             raise KeyError(f"{name} missing 'portfolio_value' column")
 
+    import matplotlib.pyplot as plt
+
     plt.figure(figsize=(10, 5))
     plt.plot(results.index, results["portfolio_value"], label="Strategy", linewidth=2)
     plt.plot(baseline.index, baseline["portfolio_value"], label="Baseline", linewidth=2, linestyle="--")
@@ -502,7 +708,10 @@ def plot_backtest_vs_baseline(
     plt.show()
 
 
-def summarize_performance(results: pd.DataFrame) -> dict[str, float]:
+def summarize_performance(
+    results: pd.DataFrame,
+    risk_free_rate: float = 0.0,
+) -> dict[str, float]:
     """Compute summary performance statistics from backtest results.
 
     Returns CAGR, volatility, Sharpe ratio, max drawdown, and turnover stats.
@@ -516,10 +725,10 @@ def summarize_performance(results: pd.DataFrame) -> dict[str, float]:
         raise KeyError(f"Missing required columns: {sorted(missing)}")
     
     trading_days = 252
-    n = len(results)
-    years = n / trading_days
+    elapsed_days = max(1, int((results.index[-1] - results.index[0]).days) + 1)
+    years = elapsed_days / 365.25
 
-    V0 = float(results["portfolio_value"].iloc[0])
+    V0 = float(results.attrs.get("initial_capital", results["portfolio_value"].iloc[0]))
     Vend = float(results["portfolio_value"].iloc[-1])
 
     # CAGR
@@ -532,16 +741,15 @@ def summarize_performance(results: pd.DataFrame) -> dict[str, float]:
     daily_ret = results["portfolio_return"].astype(float)
     vol = float(daily_ret.std(ddof=1) * np.sqrt(trading_days))
 
-    # Sharpe (rf annuel fixe)
-    rf = 0.05
-    mu_annual = float(daily_ret.mean() * trading_days)
+    daily_rf = (1.0 + float(risk_free_rate)) ** (1.0 / trading_days) - 1.0
+    excess = daily_ret - daily_rf
     sharpe = np.nan
     if vol > 0:
-        sharpe = (mu_annual - rf) / vol
+        sharpe = float(excess.mean() / daily_ret.std(ddof=1) * np.sqrt(trading_days))
 
     # Max Drawdown
     pv = results["portfolio_value"].astype(float)
-    running_max = pv.cummax()
+    running_max = pv.cummax().clip(lower=V0)
     drawdown = (pv / running_max) -1.0
     max_drawdown = float(drawdown.min())
     max_drawdown = abs(max_drawdown)
@@ -573,6 +781,8 @@ def write_backtest_outputs(
     base_dir: Path,
     existing_data_behavior: str = "overwrite_or_ignore",
     run_id: str | None = None,
+    trades: pd.DataFrame | None = None,
+    positions: pd.DataFrame | None = None,
 ) -> None:
     """Write backtest results to parquet and upsert summary in SQLite.
 
@@ -595,8 +805,8 @@ def write_backtest_outputs(
         raise ValueError("results empty")
     if not summary:
         raise ValueError("summary empty")
-    if run_id is None:
-        run_id = str(int(time.time()))
+    run_id = ensure_run_id(run_id, prefix="backtest")
+    from quant_portfolio.core.storage import write_partitioned_dataset
 
     df = results.copy()
     df["date"] = pd.to_datetime(df.index, errors="coerce")
@@ -610,6 +820,28 @@ def write_backtest_outputs(
         partition_cols,
         existing_data_behavior=existing_data_behavior,
     )
+    if trades is not None and not trades.empty:
+        trade_output = trades.copy()
+        trade_output["date"] = pd.to_datetime(trade_output["execution_date"], errors="coerce")
+        trade_output["run_id"] = str(run_id)
+        trade_output["year"] = trade_output["date"].dt.year.astype("int32")
+        write_partitioned_dataset(
+            trade_output,
+            TRADES_DIR,
+            ["year", "run_id"],
+            existing_data_behavior=existing_data_behavior,
+        )
+    if positions is not None and not positions.empty:
+        position_output = positions.copy()
+        position_output["date"] = pd.to_datetime(position_output["date"], errors="coerce")
+        position_output["run_id"] = str(run_id)
+        position_output["year"] = position_output["date"].dt.year.astype("int32")
+        write_partitioned_dataset(
+            position_output,
+            DATA_DIR / "parquet/positions",
+            ["year", "run_id"],
+            existing_data_behavior=existing_data_behavior,
+        )
     conn = sqlite3.connect(DB_PATH)
     init_backtest_db(conn)
     dates = df["date"].sort_values()
@@ -637,19 +869,29 @@ def run_backtest_pipeline(run_id: str | None = None, plot: bool = False):
     tuple[pd.DataFrame, pd.DataFrame]
         (results, baseline)
     """
+    from quant_portfolio.core.storage import load_prices_dataset, load_weights_dataset
+
     cfg = load_backtest_config()
     prices = load_prices_dataset(PRICES_DIR, columns=["date", "ticker", "adj_close"])
     weights = load_weights_dataset(WEIGHTS_DIR, run_id)
-    returns = build_returns_matrix(prices)
-    results = simulate_portfolio(returns, weights, cfg)
+    returns = build_returns_matrix(prices, return_type=cfg.return_type)
+    results, trades, positions = simulate_portfolio(
+        returns,
+        weights,
+        cfg,
+        return_details=True,
+    )
     baseline = compute_baseline_hold(prices, cfg)
-    summary = summarize_performance(results)
+    summary = summarize_performance(results, risk_free_rate=cfg.cash_rate_annual)
+    effective_run_id = str(weights.attrs.get("run_id") or ensure_run_id(run_id, prefix="backtest"))
     write_backtest_outputs(
         results,
         summary,
         partition_cols=["year", "run_id"],
         base_dir=BACKTEST_DIR,
-        run_id=run_id,
+        run_id=effective_run_id,
+        trades=trades,
+        positions=positions,
     )
     if plot:
         plot_backtest_vs_baseline(results, baseline)

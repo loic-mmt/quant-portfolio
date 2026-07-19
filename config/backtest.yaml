@@ -1,0 +1,11 @@
+rebal_freq: "W"
+transaction_bps: 1.0
+slippage_bps: 2.0
+turnover_cap: null
+initial_capital: 100000.0
+cash_rate_annual: 0.0
+execution_lag_days: 1
+return_type: "simple"
+missing_return_policy: "cash"
+start_date: null
+end_date: null

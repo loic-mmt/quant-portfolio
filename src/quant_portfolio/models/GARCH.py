@@ -1,8 +1,9 @@
 import numpy as np
 import pandas as pd
-from arch import arch_model
 
 def train_vol(returns, vol: str = "GARCH"):
+    from arch import arch_model
+
     model = arch_model(
         returns,
         vol = vol,

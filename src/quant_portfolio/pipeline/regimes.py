@@ -6,9 +6,9 @@ import numpy as np
 import sqlite3
 import time
 import shutil
-import sys
+import logging
 from typing import Any
-from ..models.hmm import (
+from quant_portfolio.models.hmm import (
     fit_markov_market,
     fit_hmm_features,
     hmm_states_from_model,
@@ -22,22 +22,19 @@ REGIMES_DIR = ROOT / "data/parquet/regimes"
 DB_PATH = ROOT / "data/_meta.db"
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 CONFIG_PATH = ROOT / "config/regimes.yaml"
+LOGGER = logging.getLogger(__name__)
 
 try:
     import yaml
 except Exception:
     yaml = None
 
-PYTHON_ROOT = Path(__file__).resolve().parents[1]
-if str(PYTHON_ROOT) not in sys.path:
-    sys.path.insert(0, str(PYTHON_ROOT))
-
-from core.db import (
+from quant_portfolio.core.db import (
     get_last_regime_date,
     init_regime_last_dates_db,
     upsert_regime_last_dates,
 )
-from core.storage import load_regime_features, write_regimes_dataset
+from quant_portfolio.core.storage import load_regime_features, write_regimes_dataset
 
 
 def load_regime_config() -> dict[str, Any]:
@@ -105,19 +102,19 @@ def run_regime_pipeline(existing_data_behavior: str = "overwrite_or_ignore") -> 
     last_regime = get_last_regime_date(conn, "regime", "__MARKET__")
     lookback_days = 260
 
-    print(f'\nLoading Features...')
+    LOGGER.info("Loading regime features")
     df_regimes = load_regime_features(FEATURES_REGIME_DIR)
     if "date" in df_regimes.columns and not full_recompute and last_regime:
         cutoff = pd.to_datetime(last_regime) - pd.Timedelta(days=lookback_days)
         df_regimes = df_regimes[df_regimes["date"] >= cutoff]
 
-    print(f'\nLoading regime configuration...')
+    LOGGER.info("Loading regime configuration")
     cfg = load_regime_config()
     regime_cols = cfg.get("regime_features")
     if not isinstance(regime_cols, list) or not regime_cols:
         regime_cols = [c for c in df_regimes.columns if c not in {"date", "year"}]
 
-    print(f'\Standardizing features...')
+    LOGGER.info("Standardizing regime features")
     X_regime = select_regime_features(df_regimes, regime_cols)
     X_regime_z, _, _ = standardize_train_apply_all(X_regime, cfg.get("train_end", "2024-01-01"))
 
@@ -126,7 +123,7 @@ def run_regime_pipeline(existing_data_behavior: str = "overwrite_or_ignore") -> 
         raise KeyError("mom_mkt_20 column is required for market returns.")
     mkt_returns = mkt_returns.dropna()
 
-    print(f'\Computing regimes...')
+    LOGGER.info("Computing regimes")
     _, hmm_features = fit_regime_model(X_regime_z, mkt_returns)
     outputs = build_regime_outputs(hmm_features, X_regime_z)
     outputs = outputs.reset_index().rename(columns={"index": "date"})
@@ -142,12 +139,12 @@ def run_regime_pipeline(existing_data_behavior: str = "overwrite_or_ignore") -> 
     if full_recompute and REGIMES_DIR.exists():
         shutil.rmtree(REGIMES_DIR)
     
-    print("outputs shape:", outputs.shape)
-    print(outputs.head(3))
-    print(outputs.dtypes)
+    LOGGER.debug("Regime output shape: %s", outputs.shape)
+    LOGGER.debug("Regime output preview:\n%s", outputs.head(3))
+    LOGGER.debug("Regime output dtypes:\n%s", outputs.dtypes)
 
 
-    print(f'\Writing regimes...')
+    LOGGER.info("Writing regimes")
     suffix = str(int(time.time()))
     basename_template = f"regimes_{suffix}_{{i}}.parquet" if not full_recompute else None
     write_regimes_dataset(
@@ -158,7 +155,7 @@ def run_regime_pipeline(existing_data_behavior: str = "overwrite_or_ignore") -> 
         basename_template=basename_template,
     )
     conn.close()
-    print(f'\Done.')
+    LOGGER.info("Regime pipeline complete")
 
 if __name__ == "__main__":
     import argparse

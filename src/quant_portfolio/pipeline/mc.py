@@ -4,7 +4,7 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 import time
-import sys
+import logging
 from typing import Any
 
 
@@ -16,17 +16,14 @@ DB_PATH = ROOT / "data/_meta.db"
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 CONFIG_PATH = ROOT / "config/mc.yaml"
 MC_DIR = ROOT / "data/parquet/mc"
+LOGGER = logging.getLogger(__name__)
 
 try:
     import yaml  # type: ignore
 except Exception:  # pragma: no cover
     yaml = None
 
-PYTHON_ROOT = Path(__file__).resolve().parents[1]
-if str(PYTHON_ROOT) not in sys.path:
-    sys.path.insert(0, str(PYTHON_ROOT))
-
-from core.storage import load_prices_dataset, load_regimes_dataset, write_mc_dataset
+from quant_portfolio.core.storage import load_prices_dataset, load_regimes_dataset, write_mc_dataset
 
 
 
@@ -185,7 +182,7 @@ def build_mc_outputs(
 
 def run_mc_pipeline(existing_data_behavior: str = "overwrite_or_ignore") -> None:
     """Run the Monte Carlo pipeline end-to-end."""
-    print("\nLoading configuration...")
+    LOGGER.info("Loading Monte-Carlo configuration")
     cfg = load_mc_config()
     n_sims = int(cfg.get("n_sims", 2000))
     horizons = [int(h) for h in cfg.get("horizons", [5, 20])]
@@ -193,29 +190,29 @@ def run_mc_pipeline(existing_data_behavior: str = "overwrite_or_ignore") -> None
     dist = str(cfg.get("dist", "gaussian"))
     tickers = cfg.get("tickers")
 
-    print("\nLoading regimes...")
+    LOGGER.info("Loading regimes")
     regimes = load_regimes_dataset(REGIMES_DIR, columns=["date", "state"])
     if regimes.empty:
         raise ValueError("No regimes data available.")
 
-    print("\nLoading prices...")
+    LOGGER.info("Loading prices")
     df_prices = load_prices_dataset(PRICES_DIR, columns=["date", "ticker", "adj_close"])
     df_prices = select_universe(df_prices, tickers)
 
-    print("\nBuilding returns matrix...")
+    LOGGER.info("Building returns matrix")
     returns = build_returns_matrix(df_prices)
     if returns.empty:
         raise ValueError("No returns matrix available.")
 
-    print("\nCalibrating regime parameters...")
+    LOGGER.info("Calibrating regime parameters")
     params = calibrate_regime_params(returns, regimes, window=window)
-    print("\nBuilding Monte-Carlo outputs...")
+    LOGGER.info("Building Monte-Carlo outputs")
     outputs = build_mc_outputs(returns, regimes, params, n_sims, horizons, dist)
 
     if outputs.empty:
         return
 
-    print("\nWriting dataset...")
+    LOGGER.info("Writing Monte-Carlo dataset")
     suffix = str(int(time.time()))
     basename_template = f"mc_{suffix}_{{i}}.parquet"
     write_mc_dataset(
@@ -225,7 +222,7 @@ def run_mc_pipeline(existing_data_behavior: str = "overwrite_or_ignore") -> None
         existing_data_behavior=existing_data_behavior,
         basename_template=basename_template,
     )
-    print("\nDone.")
+    LOGGER.info("Monte-Carlo pipeline complete")
 
 
 if __name__ == "__main__":
