@@ -2,35 +2,45 @@
 
 quant-portfolio/
 ├─ pyproject.toml
+├─ requirements.lock
 ├─ README.md
-├─ .env                       # DB_URL, chemins data, etc.
+├─ ROADMAP.md
 ├─ config/
-│  ├─ base.yaml               # chemins + paramètres globaux
+│  ├─ base.yaml               # univers, chemins et paramètres globaux
 │  ├─ regimes.yaml            # K états, fenêtres, features
-│  ├─ backtest.yaml           # coûts, turnover, rebal
-│  └─ mc.yaml                 # nb sims, horizons, dist (t)
+│  ├─ backtest.yaml           # timing, coûts, cash et turnover
+│  ├─ covariance.yaml
+│  ├─ optimize.yaml
+│  └─ mc.yaml
+├─ docs/
+│  ├─ README.md
+│  ├─ getting-started.md
+│  ├─ architecture.md
+│  ├─ configuration.md
+│  └─ temporal-contract.md
 ├─ sql/
-│  ├─ schema.sql              # création des tables
-│  └─ views.sql               # vues utiles (joins propres)
+│  ├─ schema.sql
+│  └─ views.sql
 ├─ src/
-│  ├─ python/
-│  │  ├─ main.py              # entrypoint (CLI)
+│  ├─ quant_portfolio/
+│  │  ├─ main.py              # CLI
 │  │  ├─ core/
-│  │  │  ├─ settings.py        # lit YAML + .env
-│  │  │  ├─ db.py              # connexion + fonctions DB
-│  │  │  ├─ storage.py         # I/O Parquet (paths standards)
-│  │  │  └─ ids.py             # run_id, hash configs, etc.
+│  │  │  ├─ settings.py
+│  │  │  ├─ db.py
+│  │  │  ├─ storage.py
+│  │  │  └─ ids.py
 │  │  ├─ pipeline/
-│  │  │  ├─ ingest.py          # import prix -> parquet/db
-│  │  │  ├─ features.py        # build features
-│  │  │  ├─ regimes.py         # fit HMM / clustering
-│  │  │  ├─ mc.py              # MC conditionnel au régime
-│  │  │  ├─ optimize.py        # allocation
-│  │  │  ├─ backtest.py        # exécution + logs
-│  │  │  └─ report.py          # rapport final
+│  │  │  ├─ ingest.py
+│  │  │  ├─ features.py
+│  │  │  ├─ regimes.py
+│  │  │  ├─ mc.py
+│  │  │  ├─ optimize.py
+│  │  │  ├─ backtest.py
+│  │  │  └─ report.py
 │  │  └─ models/
 │  │     ├─ hmm.py
-│  │     └─ covariance.py      # shrinkage, etc.
+│  │     ├─ covariance.py
+│  │     └─ GARCH.py
 │  └─ cpp/
 │     ├─ CMakeLists.txt
 │     ├─ include/
@@ -46,6 +56,10 @@ quant-portfolio/
 │  │  ├─ features/
 │  │  ├─ regimes/
 │  │  ├─ mc/
+│  │  ├─ weights/
+│  │  ├─ trades/
+│  │  ├─ positions/
 │  │  └─ backtests/
-│  └─ artifacts/               # rapports pdf, figures
-└─ notebooks/                  # exploration
+├─ artifacts/
+├─ tests/
+└─ notebooks/

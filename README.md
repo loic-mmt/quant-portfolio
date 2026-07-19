@@ -273,17 +273,22 @@ Parquet is ideal.
 ---
 
 ## Project Structure (may vary):
+
+```text
+config/                     configuration versionnée
+docs/                       guides et conventions
+sql/                        schéma et vues SQLite
 src/
-ingest/
-features/
-regimes/
-risk_mc/
-optimize/
-backtest/
-report/
-db/
-data/
-artifacts/
+  quant_portfolio/
+    core/                   configuration, IDs et stockage
+    models/                 modèles statistiques
+    pipeline/               étapes du pipeline
+    main.py                 CLI
+  cpp/                      accélération optionnelle
+tests/                      tests déterministes
+data/                       Parquet et métadonnées locales
+artifacts/                  rapports générés
+```
 
 
 - **Python** orchestrates and owns the research pipeline.
@@ -294,15 +299,35 @@ artifacts/
 
 ## How to Run
 
-High-level steps:
-1. Configure tickers and parameters in config files.
-2. Run ingestion (incremental).
-3. Build features.
-4. Fit regimes (walk-forward).
-5. Run backtest.
-6. Generate report.
+Installation :
 
-(Exact CLI commands depend on implementation.)
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.lock
+python -m pip install -e . --no-deps
+```
+
+Commandes :
+
+```bash
+quant-portfolio ingest
+quant-portfolio features
+quant-portfolio regimes
+quant-portfolio mc
+quant-portfolio optimize --run-id experiment-001
+quant-portfolio backtest --run-id experiment-001
+quant-portfolio report --run-id experiment-001
+```
+
+Pipeline complet :
+
+```bash
+quant-portfolio run-all --run-id experiment-001
+```
+
+La documentation détaillée est disponible dans [`docs/`](docs/README.md), notamment le
+[contrat temporel du backtest](docs/temporal-contract.md).
 
 ---
 
