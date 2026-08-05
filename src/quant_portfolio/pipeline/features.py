@@ -1,30 +1,31 @@
 import numpy as np
 import pandas as pd
-from pathlib import Path
-from sklearn import linear_model
-import shutil
 import sqlite3
-import time
 import logging
-from scipy.stats import skew, kurtosis
 
 from quant_portfolio.core.db import (
-    get_all_last_feature_dates,
-    get_last_feature_date,
     init_feature_last_dates_db,
     upsert_feature_last_dates,
 )
-from quant_portfolio.core.storage import load_prices_dataset, write_features_dataset
+from quant_portfolio.core.settings import load_base_config
+from quant_portfolio.core.storage import (
+    load_asset_features,
+    load_prices_dataset,
+    load_regime_features,
+    replace_partitioned_dataset,
+)
+from quant_portfolio.pipeline.data_quality import (
+    build_feature_quality_report,
+    build_price_quality_report,
+    clean_price_data,
+    convert_prices_to_reference_currency,
+    write_json_report,
+)
 
 
-ROOT = Path(__file__).resolve().parents[3]
-DATA_DIR = ROOT / "data"
-
-
-out_dir = DATA_DIR / "parquet/features"
-CLEAN_PARQUET = False  # set True only if you want to reset the dataset
-if CLEAN_PARQUET and out_dir.exists():
-    shutil.rmtree(out_dir)
+BASE_CONFIG = load_base_config()
+DATA_DIR = BASE_CONFIG.data_dir
+out_dir = BASE_CONFIG.parquet_dir / "features"
 out_dir.mkdir(parents=True, exist_ok=True)
 
 REGIME_DIR = out_dir / "regime"
@@ -80,12 +81,12 @@ def trend_slope_60(df):
     prices = df["adj_close"] if "adj_close" in df.columns else df.iloc[:, 0]
     log_prices = np.log(prices)
     window = 60
-    x = np.arange(window).reshape(-1, 1)
+    x = np.arange(window, dtype="float64")
+    x_centered = x - x.mean()
+    denominator = float(np.dot(x_centered, x_centered))
 
     def slope_from_window(y_window):
-        lr = linear_model.LinearRegression()
-        lr.fit(x, y_window)
-        return lr.coef_[0]
+        return float(np.dot(x_centered, y_window - np.mean(y_window)) / denominator)
 
     return log_prices.rolling(window).apply(slope_from_window, raw=True)
 
@@ -264,10 +265,11 @@ def breadth(df: pd.DataFrame, tickers: list[str] | None = None):
         return pd.DataFrame(index=df.index if df is not None else None)
     prices, returns = _pivot_prices_returns(df, tickers)
 
-    breadth_up = (returns > 0).mean(axis=1, skipna=True)
+    breadth_up = returns.gt(0).where(returns.notna()).mean(axis=1, skipna=True)
     breadth_up_20 = breadth_up.rolling(20).mean()
     ma50 = prices.rolling(50).mean()
-    breadth_ma50 = (prices > ma50).mean(axis=1, skipna=True)
+    valid_ma = prices.notna() & ma50.notna()
+    breadth_ma50 = prices.gt(ma50).where(valid_ma).mean(axis=1, skipna=True)
 
     out = pd.DataFrame(index=returns.index)
     out["breadth_up"] = breadth_up
@@ -289,11 +291,15 @@ def correlation_shock(df: pd.DataFrame, tickers: list[str] | None = None):
 
 
 def build_market_index(df: pd.DataFrame, tickers: list[str] | None = None):
-    """Build a simple equal-weight market proxy from prices."""
+    """Build scale-invariant equal-weight proxy from daily asset returns."""
     prices, _ = _pivot_prices_returns(df, tickers)
-    daily_mean_prices = prices.mean(axis=1, skipna=True)
+    simple_returns = prices.pct_change(fill_method=None)
+    market_returns = simple_returns.mean(axis=1, skipna=True)
+    market_returns = market_returns.where(simple_returns.notna().any(axis=1))
+    index_level = 100.0 * (1.0 + market_returns.fillna(0.0)).cumprod()
     out = pd.DataFrame(index=prices.index)
-    out["adj_close"] = daily_mean_prices
+    out["adj_close"] = index_level
+    out["market_return"] = market_returns
     return out
 
 
@@ -523,79 +529,167 @@ def liquidity_features(df: pd.DataFrame, window: int = 20):
 # ========================================================
 
 
+def compute_feature_datasets(
+    prices_frame: pd.DataFrame,
+    tickers: list[str] | tuple[str, ...] | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Compute complete causal regime and asset feature snapshots."""
+    clean = clean_price_data(prices_frame)
+    selected = list(tickers) if tickers is not None else None
+    regime_out = regime_features(clean, selected).reset_index()
+    if "index" in regime_out.columns and "date" not in regime_out.columns:
+        regime_out = regime_out.rename(columns={"index": "date"})
+    assets_out = asset_features(clean, selected).reset_index()
+    regime_out["date"] = pd.to_datetime(regime_out["date"], errors="coerce")
+    assets_out["date"] = pd.to_datetime(assets_out["date"], errors="coerce")
+    return regime_out.sort_values("date"), assets_out.sort_values(["ticker", "date"])
+
+
+def merge_feature_snapshots(
+    existing: pd.DataFrame,
+    computed: pd.DataFrame,
+    key_columns: list[str],
+    *,
+    full_recompute: bool,
+) -> pd.DataFrame:
+    """Merge only unseen computed rows, producing idempotent feature snapshot."""
+    if full_recompute or existing is None or existing.empty:
+        result = computed.copy()
+    elif key_columns == ["date"]:
+        cutoff = pd.to_datetime(existing["date"], errors="coerce").max()
+        new_rows = computed[pd.to_datetime(computed["date"], errors="coerce") > cutoff]
+        result = pd.concat([existing, new_rows], ignore_index=True)
+    else:
+        existing_dates = existing.copy()
+        existing_dates["date"] = pd.to_datetime(existing_dates["date"], errors="coerce")
+        cutoffs = existing_dates.groupby("ticker")["date"].max()
+        candidate = computed.copy()
+        candidate["date"] = pd.to_datetime(candidate["date"], errors="coerce")
+        cutoff = candidate["ticker"].map(cutoffs)
+        new_rows = candidate[cutoff.isna() | candidate["date"].gt(cutoff)]
+        result = pd.concat([existing, new_rows], ignore_index=True)
+
+    result["date"] = pd.to_datetime(result["date"], errors="coerce")
+    result = result.dropna(subset=key_columns)
+    result = result.drop_duplicates(key_columns, keep="last")
+    return result.sort_values(key_columns).reset_index(drop=True)
+
+
+def _dataset_exists(path) -> bool:
+    return path.exists() and any(path.rglob("*.parquet"))
+
+
 def run_features_pipeline(existing_data_behavior: str = "overwrite_or_ignore") -> None:
-    """Run the feature computation pipeline end-to-end."""
+    """Build exact incremental features from full causal history and audit quality."""
+    if existing_data_behavior not in {
+        "overwrite_or_ignore",
+        "overwrite",
+        "delete_matching",
+        "error",
+    }:
+        raise ValueError(f"Unsupported existing_data_behavior: {existing_data_behavior}")
+
     conn = sqlite3.connect(DB_PATH)
     init_feature_last_dates_db(conn)
 
     full_recompute = existing_data_behavior in {"overwrite", "delete_matching"}
-    lookback_days = 260
+    if existing_data_behavior == "error" and (
+        _dataset_exists(REGIME_DIR) or _dataset_exists(ASSET_DIR)
+    ):
+        conn.close()
+        raise FileExistsError("Feature dataset already exists")
 
-    last_regime = get_last_feature_date(conn, "regime", "__MARKET__")
-    last_assets = get_all_last_feature_dates(conn, "assets")
+    try:
+        LOGGER.info("Loading full price history for exact incremental computation")
+        raw_prices = load_prices_dataset(
+            BASE_CONFIG.parquet_dir / "prices",
+            tickers=list(BASE_CONFIG.tickers),
+            clean=False,
+        )
+        raw_fx = (
+            load_prices_dataset(
+                BASE_CONFIG.parquet_dir / "fx",
+                tickers=[rate.ticker for rate in BASE_CONFIG.universe.fx_rates],
+                clean=False,
+            )
+            if _dataset_exists(BASE_CONFIG.parquet_dir / "fx")
+            else pd.DataFrame()
+        )
+        price_quality = build_price_quality_report(
+            raw_prices,
+            BASE_CONFIG.tickers,
+            configured_statuses={
+                asset.ticker: asset.status for asset in BASE_CONFIG.universe.assets
+            },
+        )
+        fx_quality = build_price_quality_report(
+            raw_fx,
+            [rate.ticker for rate in BASE_CONFIG.universe.fx_rates],
+        )
+        converted = convert_prices_to_reference_currency(
+            raw_prices,
+            raw_fx,
+            BASE_CONFIG.universe,
+        )
+        missing_fx_rows = int(converted["adj_close"].isna().sum())
+        converted = clean_price_data(converted)
+        if converted.empty:
+            raise ValueError("No valid reference-currency prices available for features")
 
-    LOGGER.info("Loading prices")
-    prices = load_prices_dataset(DATA_DIR / "parquet/prices", clean=False)
-    if not full_recompute and (last_regime or last_assets):
-        dates = [d for d in [last_regime, *last_assets.values()] if d is not None]
-        if dates:
-            min_last = pd.to_datetime(min(dates))
-            start_date = min_last - pd.Timedelta(days=lookback_days)
-            prices["date"] = pd.to_datetime(prices["date"], errors="coerce")
-            prices = prices[prices["date"] >= start_date]
+        LOGGER.info("Calculating features from %d validated price rows", len(converted))
+        regime_computed, assets_computed = compute_feature_datasets(
+            converted,
+            BASE_CONFIG.tickers,
+        )
 
-    if full_recompute:
-        if REGIME_DIR.exists():
-            shutil.rmtree(REGIME_DIR)
-        if ASSET_DIR.exists():
-            shutil.rmtree(ASSET_DIR)
+        regime_existing = (
+            load_regime_features(REGIME_DIR) if _dataset_exists(REGIME_DIR) else pd.DataFrame()
+        )
+        assets_existing = (
+            load_asset_features(ASSET_DIR) if _dataset_exists(ASSET_DIR) else pd.DataFrame()
+        )
+        regime_out = merge_feature_snapshots(
+            regime_existing,
+            regime_computed,
+            ["date"],
+            full_recompute=full_recompute,
+        )
+        assets_out = merge_feature_snapshots(
+            assets_existing,
+            assets_computed,
+            ["ticker", "date"],
+            full_recompute=full_recompute,
+        )
 
-    LOGGER.info("Calculating regime features")
-    regime = regime_features(prices)
-    if not full_recompute and last_regime:
-        cutoff = pd.to_datetime(last_regime)
-        regime = regime[regime.index > cutoff]
-    regime_out = regime.reset_index().rename(columns={"index": "date"})
+        LOGGER.info("Replacing idempotent feature snapshots")
+        replace_partitioned_dataset(regime_out, REGIME_DIR, ["year"])
+        replace_partitioned_dataset(assets_out, ASSET_DIR, ["ticker", "year"])
 
-    LOGGER.info("Calculating asset features")
-    assets = asset_features(prices)
-    assets_out = assets.reset_index()
-    if not full_recompute and last_assets:
-        assets_out["date"] = pd.to_datetime(assets_out["date"], errors="coerce")
-        last_map = pd.Series(last_assets)
-        cutoff = assets_out["ticker"].map(last_map).fillna(pd.Timestamp.min)
-        assets_out = assets_out[assets_out["date"] > cutoff]
+        regime_freshness = regime_out[["date"]].copy()
+        regime_freshness["ticker"] = "__MARKET__"
+        upsert_feature_last_dates(conn, "regime", regime_freshness)
+        upsert_feature_last_dates(conn, "assets", assets_out)
 
-    LOGGER.debug("Regime feature NA counts:\n%s", regime_out.isna().sum())
-    LOGGER.debug("Asset feature NA counts:\n%s", assets_out.isna().sum())
-    suffix = str(int(time.time()))
-    basename_template = f"features_{suffix}_{{i}}.parquet" if not full_recompute else None
-
-    LOGGER.info("Writing regime features dataset")
-    write_features_dataset(
-        regime_out,
-        REGIME_DIR,
-        partition_cols=["year"],
-        existing_data_behavior=existing_data_behavior,
-        basename_template=basename_template,
-    )
-    LOGGER.info("Writing asset features dataset")
-    write_features_dataset(
-        assets_out,
-        ASSET_DIR,
-        partition_cols=["ticker", "year"],
-        existing_data_behavior=existing_data_behavior,
-        basename_template=basename_template,
-    )
-
-    LOGGER.info("Updating feature freshness metadata")
-    if not regime_out.empty:
-        regime_out["ticker"] = "__MARKET__"
-        upsert_feature_last_dates(conn, "regime", regime_out, ticker_col="ticker")
-    if not assets_out.empty:
-        upsert_feature_last_dates(conn, "assets", assets_out, ticker_col="ticker")
-
-    conn.close()
+        feature_quality = build_feature_quality_report(
+            regime_out,
+            assets_out,
+            universe=BASE_CONFIG.universe,
+        )
+        feature_quality["prices"] = price_quality
+        feature_quality["fx"] = fx_quality
+        feature_quality["fx"]["missing_converted_rows"] = missing_fx_rows
+        write_json_report(
+            feature_quality,
+            BASE_CONFIG.data_dir / "quality/features_latest.json",
+        )
+        LOGGER.info(
+            "Features complete: regime_rows=%d asset_rows=%d missing_fx_rows=%d",
+            len(regime_out),
+            len(assets_out),
+            missing_fx_rows,
+        )
+    finally:
+        conn.close()
 
 
 if __name__ == "__main__":

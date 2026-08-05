@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+import shutil
 from typing import Iterable
+import uuid
 
 import pandas as pd
 import pyarrow as pa
@@ -51,11 +53,16 @@ def _ensure_year_column(df: pd.DataFrame, date_col: str = "date") -> pd.DataFram
     pd.DataFrame
         DataFrame with a valid ``year`` column when derivable.
     """
-    if "year" not in df.columns and date_col in df.columns:
+    if date_col in df.columns:
         dt = pd.to_datetime(df[date_col], errors="coerce")
         ok = dt.notna()
         df = df.loc[ok].copy()
-        df["year"] = dt.loc[ok].dt.year.astype("int32")
+        derived_year = dt.loc[ok].dt.year
+        if "year" in df.columns:
+            existing_year = pd.to_numeric(df["year"], errors="coerce")
+            df["year"] = existing_year.fillna(derived_year).astype("int32")
+        else:
+            df["year"] = derived_year.astype("int32")
     return df
 
 
@@ -112,6 +119,42 @@ def write_partitioned_dataset(
         existing_data_behavior=existing_data_behavior,
         basename_template=basename_template,
     )
+
+
+def replace_partitioned_dataset(
+    df: pd.DataFrame,
+    base_dir: Path,
+    partition_cols: list[str],
+) -> None:
+    """Atomically replace a dataset snapshot with deterministic, deduplicated rows."""
+    if df is None or df.empty:
+        raise ValueError(f"Cannot replace dataset with empty frame: {base_dir}")
+
+    parent = base_dir.parent
+    parent.mkdir(parents=True, exist_ok=True)
+    token = uuid.uuid4().hex
+    temporary = parent / f".{base_dir.name}.tmp-{token}"
+    backup = parent / f".{base_dir.name}.backup-{token}"
+    try:
+        write_partitioned_dataset(
+            df,
+            temporary,
+            partition_cols,
+            existing_data_behavior="error",
+            basename_template="part-{i}.parquet",
+        )
+        if base_dir.exists():
+            base_dir.rename(backup)
+        temporary.rename(base_dir)
+        if backup.exists():
+            shutil.rmtree(backup)
+    except Exception:
+        if not base_dir.exists() and backup.exists():
+            backup.rename(base_dir)
+        raise
+    finally:
+        if temporary.exists():
+            shutil.rmtree(temporary)
 
 
 def append_prices_dataset(df: pd.DataFrame, base_dir: Path) -> int:
