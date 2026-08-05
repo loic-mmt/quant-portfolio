@@ -26,9 +26,12 @@ except Exception:
 
 from quant_portfolio.core.db import init_backtest_db, upsert_backtest_summary
 from quant_portfolio.core.ids import ensure_run_id
+from quant_portfolio.core.settings import load_base_config
+from quant_portfolio.pipeline.data_quality import load_reference_price_dataset
 
 
 LOGGER = logging.getLogger(__name__)
+BASE_CONFIG = load_base_config()
 
 @dataclass
 class BacktestConfig:
@@ -869,10 +872,10 @@ def run_backtest_pipeline(run_id: str | None = None, plot: bool = False):
     tuple[pd.DataFrame, pd.DataFrame]
         (results, baseline)
     """
-    from quant_portfolio.core.storage import load_prices_dataset, load_weights_dataset
+    from quant_portfolio.core.storage import load_weights_dataset
 
     cfg = load_backtest_config()
-    prices = load_prices_dataset(PRICES_DIR, columns=["date", "ticker", "adj_close"])
+    prices = load_reference_price_dataset(BASE_CONFIG)
     weights = load_weights_dataset(WEIGHTS_DIR, run_id)
     returns = build_returns_matrix(prices, return_type=cfg.return_type)
     results, trades, positions = simulate_portfolio(

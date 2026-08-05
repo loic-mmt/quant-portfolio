@@ -23,7 +23,12 @@ try:
 except Exception:  # pragma: no cover
     yaml = None
 
-from quant_portfolio.core.storage import load_prices_dataset, load_regimes_dataset, write_mc_dataset
+from quant_portfolio.core.settings import load_base_config
+from quant_portfolio.core.storage import load_regimes_dataset, write_mc_dataset
+from quant_portfolio.pipeline.data_quality import load_reference_price_dataset
+
+
+BASE_CONFIG = load_base_config()
 
 
 
@@ -196,7 +201,7 @@ def run_mc_pipeline(existing_data_behavior: str = "overwrite_or_ignore") -> None
         raise ValueError("No regimes data available.")
 
     LOGGER.info("Loading prices")
-    df_prices = load_prices_dataset(PRICES_DIR, columns=["date", "ticker", "adj_close"])
+    df_prices = load_reference_price_dataset(BASE_CONFIG)
     df_prices = select_universe(df_prices, tickers)
 
     LOGGER.info("Building returns matrix")

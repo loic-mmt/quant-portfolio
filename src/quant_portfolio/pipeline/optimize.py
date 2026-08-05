@@ -14,10 +14,11 @@ except Exception:
 
 from quant_portfolio.core.storage import (
     load_mc_dataset,
-    load_prices_dataset,
     load_regimes_dataset,
     write_weights_dataset,
 )
+from quant_portfolio.core.settings import load_base_config
+from quant_portfolio.pipeline.data_quality import load_reference_price_dataset
 from quant_portfolio.models.covariance import (
     load_covariance_config,
     compute_covariance_with_columns,
@@ -32,6 +33,7 @@ CONFIG_PATH = ROOT / "config/optimize.yaml"
 REGIME_DIR = DATA_DIR / "parquet/regimes"
 MC_DIR = DATA_DIR / "parquet/mc"
 LOGGER = logging.getLogger(__name__)
+BASE_CONFIG = load_base_config()
 
 
 @dataclass
@@ -609,7 +611,7 @@ def run_optimize_pipeline(
         The run identifier used for the output dataset.
     """
     config = load_optimize_config()
-    prices = load_prices_dataset(PRICES_DIR, columns=["date", "ticker", "adj_close"])
+    prices = load_reference_price_dataset(BASE_CONFIG)
     returns = build_returns_matrix(prices)
     rebal_dates = build_rebalance_dates(returns.index, freq=config.rebal_freq)
     weights = optimize_over_time(returns, rebal_dates, config)
