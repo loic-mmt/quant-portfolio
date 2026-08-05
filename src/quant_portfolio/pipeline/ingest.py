@@ -11,13 +11,16 @@ from quant_portfolio.core.db import (
     upsert_price_last_dates,
 )
 from quant_portfolio.core.settings import load_base_config
-from quant_portfolio.core.storage import append_prices_dataset
+from quant_portfolio.core.storage import append_prices_dataset, load_prices_dataset
+from quant_portfolio.pipeline.data_quality import build_price_quality_report, write_json_report
 
 
 LOGGER = logging.getLogger(__name__)
 BASE_CONFIG = load_base_config()
 out_dir = BASE_CONFIG.parquet_dir / "prices"
+fx_out_dir = BASE_CONFIG.parquet_dir / "fx"
 out_dir.mkdir(parents=True, exist_ok=True)
+fx_out_dir.mkdir(parents=True, exist_ok=True)
 DB_PATH = BASE_CONFIG.metadata_db
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 tickers_2024 = list(BASE_CONFIG.tickers)  # Compatibility alias for existing notebooks.
@@ -36,7 +39,7 @@ def download_one(ticker: str, start: str | None, end: str | None = None) -> pd.D
         auto_adjust=False,
         progress=False,
         interval="1d",
-        actions=False,
+        actions=True,
         group_by="column",
     )
 
@@ -52,7 +55,19 @@ def normalize_yf(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
       ticker, date (YYYY-MM-DD), year (int32), open, high, low, close, adj_close, volume (int64)
     """
 
-    cols = ["ticker", "date", "year", "open", "high", "low", "close", "adj_close", "volume"]
+    cols = [
+        "ticker",
+        "date",
+        "year",
+        "open",
+        "high",
+        "low",
+        "close",
+        "adj_close",
+        "volume",
+        "dividends",
+        "stock_splits",
+    ]
 
     if df is None or df.empty:
         return pd.DataFrame(columns=cols)
@@ -109,17 +124,26 @@ def normalize_yf(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
         vol = vol.iloc[:, 0]
     out["volume"] = pd.to_numeric(vol, errors="coerce").fillna(0).astype("int64")
 
+    for action_column in ["dividends", "stock_splits"]:
+        if action_column not in out.columns:
+            out[action_column] = 0.0
+        out[action_column] = pd.to_numeric(out[action_column], errors="coerce").fillna(0.0)
+
     return out[cols]
 
 
 
 def run_ingest_pipeline() -> None:
-    """Run the ingestion pipeline for the static ticker list."""
+    """Ingest versioned assets and required FX rates, then write quality audit."""
     conn = sqlite3.connect(DB_PATH)
     init_prices_last_dates_db(conn)
 
     total = 0
-    for t in BASE_CONFIG.tickers:
+    download_status: list[dict[str, object]] = []
+
+    def ingest_one(ticker: str, target_dir, kind: str) -> None:
+        nonlocal total
+        t = ticker.upper()
         last = get_last_price_date(conn, t)
         if last is None:
             start = BASE_CONFIG.start_date
@@ -127,23 +151,68 @@ def run_ingest_pipeline() -> None:
             start_dt = datetime.strptime(last, "%Y-%m-%d") + timedelta(days=1)
             start = start_dt.strftime("%Y-%m-%d")
 
-        df = download_one(t, start=start, end=BASE_CONFIG.end_date)
+        try:
+            df = download_one(t, start=start, end=BASE_CONFIG.end_date)
+        except Exception as exc:
+            LOGGER.error("%s %s download failed: %s", kind, t, exc)
+            download_status.append(
+                {"ticker": t, "kind": kind, "status": "error", "rows": 0, "last_date": last}
+            )
+            return
         df2 = normalize_yf(df, t)
 
-        inserted = append_prices_dataset(df2, out_dir)
+        inserted = append_prices_dataset(df2, target_dir)
         new_last = upsert_price_last_dates(conn, df2)
         total += inserted
 
-        LOGGER.info(
-            "%s: last=%s start=%s rows=%d new_last=%s",
+        status = "downloaded" if inserted else ("current" if last else "missing")
+        log = LOGGER.warning if status == "missing" else LOGGER.info
+        log(
+            "%s %s: last=%s start=%s rows=%d new_last=%s status=%s",
+            kind,
             t,
             last,
             start,
             inserted,
             new_last,
+            status,
+        )
+        download_status.append(
+            {
+                "ticker": t,
+                "kind": kind,
+                "status": status,
+                "rows": inserted,
+                "last_date": new_last or last,
+            }
         )
 
+    for ticker in BASE_CONFIG.tickers:
+        ingest_one(ticker, out_dir, "asset")
+    for rate in BASE_CONFIG.universe.fx_rates:
+        ingest_one(rate.ticker, fx_out_dir, "fx")
+
     conn.close()
+
+    if out_dir.exists() and any(out_dir.rglob("*.parquet")):
+        persisted = load_prices_dataset(out_dir, tickers=list(BASE_CONFIG.tickers), clean=False)
+    else:
+        persisted = pd.DataFrame()
+    report = build_price_quality_report(
+        persisted,
+        BASE_CONFIG.tickers,
+        configured_statuses={
+            asset.ticker: asset.status for asset in BASE_CONFIG.universe.assets
+        },
+    )
+    report["universe"] = {
+        "id": BASE_CONFIG.universe.universe_id,
+        "version": BASE_CONFIG.universe.version,
+        "fingerprint": BASE_CONFIG.universe.fingerprint,
+        "reference_currency": BASE_CONFIG.reference_currency,
+    }
+    report["downloads"] = download_status
+    write_json_report(report, BASE_CONFIG.data_dir / "quality/ingest_latest.json")
     LOGGER.info("Ingestion complete: %d rows written", total)
 
 
