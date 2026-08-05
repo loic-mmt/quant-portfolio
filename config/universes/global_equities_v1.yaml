@@ -1,0 +1,83 @@
+universe_id: global-equities-legacy-2024
+version: 1
+as_of: "2024"
+constituent_source: >-
+  Legacy tickers_2024 research list committed with project. Original selection
+  methodology and point-in-time constituent source were not preserved.
+survivorship_bias: >-
+  Snapshot is not point-in-time constituent history. Results may contain
+  survivorship and selection bias; do not interpret them as investable history.
+reference_currency: EUR
+fx_policy: convert_to_reference
+
+# Yahoo FX series quote local currency units per EUR. Local prices are divided
+# by rate. London listings use pence and therefore price_multiplier 0.01.
+fx_rates:
+  USD: EURUSD=X
+  AUD: EURAUD=X
+  CAD: EURCAD=X
+  CHF: EURCHF=X
+  GBP: EURGBP=X
+  HKD: EURHKD=X
+  HUF: EURHUF=X
+  JPY: EURJPY=X
+  NOK: EURNOK=X
+  PLN: EURPLN=X
+  SEK: EURSEK=X
+
+assets:
+  - {ticker: PDD, currency: USD, status: unknown}
+  - {ticker: SDRL, currency: USD, status: unknown}
+  - {ticker: SMCI, currency: USD, status: unknown}
+  - {ticker: WHD, currency: USD, status: unknown}
+  - {ticker: DHT, currency: USD, status: unknown}
+  - {ticker: EG, currency: USD, status: unknown}
+  - {ticker: NFG, currency: USD, status: unknown}
+  - {ticker: PTEN, currency: USD, status: unknown}
+  - {ticker: PFS, currency: USD, status: unknown}
+  - {ticker: LYC.AX, currency: AUD, status: unknown}
+  - {ticker: PRN.AX, currency: AUD, status: unknown}
+  - {ticker: GSY.TO, currency: CAD, status: unknown}
+  - {ticker: BCHN.SW, currency: CHF, status: unknown}
+  - {ticker: CFR.SW, currency: CHF, status: unknown}
+  - {ticker: DOC.VI, currency: EUR, status: unknown}
+  - {ticker: MAIRE.MI, currency: EUR, status: unknown}
+  - {ticker: MAP.MC, currency: EUR, status: unknown}
+  - {ticker: RHM.DE, currency: EUR, status: unknown}
+  - {ticker: RYAAY, currency: USD, status: unknown}
+  - {ticker: AEG, currency: USD, status: unknown}
+  - {ticker: BRNL.AS, currency: EUR, status: unknown}
+  - {ticker: COK.DE, currency: EUR, status: unknown}
+  - {ticker: CBK.DE, currency: EUR, status: unknown}
+  - {ticker: DIE.BR, currency: EUR, status: unknown}
+  - {ticker: FSKRS.HE, currency: EUR, status: unknown}
+  - {ticker: GTT.PA, currency: EUR, status: unknown}
+  - {ticker: GEST.MC, currency: EUR, status: unknown}
+  - {ticker: KSB.DE, currency: EUR, status: unknown}
+  - {ticker: SL.MI, currency: EUR, status: unknown}
+  - {ticker: SBO.VI, currency: EUR, status: unknown}
+  - {ticker: HO.PA, currency: EUR, status: unknown}
+  - {ticker: FR.PA, currency: EUR, status: unknown}
+  - {ticker: VCT.PA, currency: EUR, status: unknown}
+  - {ticker: WAVE.PA, currency: EUR, status: unknown}
+  - {ticker: MONY.L, currency: GBP, price_multiplier: 0.01, status: unknown}
+  - {ticker: BEZ.L, currency: GBP, price_multiplier: 0.01, status: unknown}
+  - {ticker: DRX.L, currency: GBP, price_multiplier: 0.01, status: unknown}
+  - {ticker: INCH.L, currency: GBP, price_multiplier: 0.01, status: unknown}
+  - {ticker: TBCG.L, currency: GBP, price_multiplier: 0.01, status: unknown}
+  - {ticker: 1908.HK, currency: HKD, status: unknown}
+  - {ticker: 3320.HK, currency: HKD, status: unknown}
+  - {ticker: 1138.HK, currency: HKD, status: unknown}
+  - {ticker: 2367.HK, currency: HKD, status: unknown}
+  - {ticker: 2005.HK, currency: HKD, status: unknown}
+  - {ticker: 1585.HK, currency: HKD, status: unknown}
+  - {ticker: RICHTER.BD, currency: HUF, status: unknown}
+  - {ticker: ADMIE.AT, currency: EUR, status: unknown}
+  - {ticker: 6532.T, currency: JPY, status: unknown}
+  - {ticker: 7267.T, currency: JPY, status: unknown}
+  - {ticker: ELK.OL, currency: NOK, status: unknown}
+  - {ticker: MOWI.OL, currency: NOK, status: unknown}
+  - {ticker: SBNOR.OL, currency: NOK, status: unknown}
+  - {ticker: BFT.WA, currency: PLN, status: unknown}
+  - {ticker: UNIB-SDB.ST, currency: SEK, status: unknown}
+  - {ticker: VOLCAR-B.ST, currency: SEK, status: unknown}

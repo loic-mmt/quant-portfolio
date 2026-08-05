@@ -7,6 +7,8 @@ from typing import Any, Mapping
 
 import yaml
 
+from quant_portfolio.core.universe import UniverseDefinition, load_universe
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_BASE_CONFIG = PROJECT_ROOT / "config/base.yaml"
@@ -17,12 +19,20 @@ VALID_LOG_LEVELS = {"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG", "NOTSET"}
 class BaseConfig:
     """Configuration shared by all pipeline stages."""
 
-    tickers: tuple[str, ...]
+    universe: UniverseDefinition
     data_dir: Path
     start_date: str
     end_date: str | None
     log_level: str
     random_seed: int
+
+    @property
+    def tickers(self) -> tuple[str, ...]:
+        return self.universe.tickers
+
+    @property
+    def reference_currency(self) -> str:
+        return self.universe.reference_currency
 
     @property
     def parquet_dir(self) -> Path:
@@ -46,23 +56,18 @@ def load_yaml_mapping(path: Path) -> dict[str, Any]:
     return dict(data)
 
 
-def _normalise_tickers(raw: object) -> tuple[str, ...]:
-    if not isinstance(raw, list) or not raw:
-        raise ValueError("base.yaml must define a non-empty 'tickers' list")
-    tickers = tuple(str(item).strip().upper() for item in raw if str(item).strip())
-    if not tickers:
-        raise ValueError("The configured ticker universe is empty")
-    duplicates = sorted({ticker for ticker in tickers if tickers.count(ticker) > 1})
-    if duplicates:
-        raise ValueError(f"Duplicate tickers in base.yaml: {duplicates}")
-    return tickers
-
-
 def load_base_config(path: Path | None = None) -> BaseConfig:
     """Load and validate the common project configuration."""
     config_path = path or DEFAULT_BASE_CONFIG
     data = load_yaml_mapping(config_path)
-    allowed = {"tickers", "data_dir", "start_date", "end_date", "log_level", "random_seed"}
+    allowed = {
+        "universe_file",
+        "data_dir",
+        "start_date",
+        "end_date",
+        "log_level",
+        "random_seed",
+    }
     unknown = set(data) - allowed
     if unknown:
         raise ValueError(f"Unknown fields in {config_path.name}: {sorted(unknown)}")
@@ -82,8 +87,16 @@ def load_base_config(path: Path | None = None) -> BaseConfig:
     if random_seed < 0:
         raise ValueError("random_seed must be >= 0")
 
+    universe_raw = str(data.get("universe_file", "")).strip()
+    if not universe_raw:
+        raise ValueError("base.yaml must define 'universe_file'")
+    universe_path = Path(universe_raw)
+    if not universe_path.is_absolute():
+        universe_path = PROJECT_ROOT / universe_path
+    universe = load_universe(universe_path)
+
     return BaseConfig(
-        tickers=_normalise_tickers(data.get("tickers")),
+        universe=universe,
         data_dir=data_dir,
         start_date=start_date,
         end_date=end_date,
