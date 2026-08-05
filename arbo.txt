@@ -7,6 +7,8 @@ quant-portfolio/
 ├─ ROADMAP.md
 ├─ config/
 │  ├─ base.yaml               # univers, chemins et paramètres globaux
+│  ├─ universes/
+│  │  └─ global_equities_v1.yaml # snapshot, devises, provenance et FX
 │  ├─ regimes.yaml            # K états, fenêtres, features
 │  ├─ backtest.yaml           # timing, coûts, cash et turnover
 │  ├─ covariance.yaml
@@ -17,6 +19,7 @@ quant-portfolio/
 │  ├─ getting-started.md
 │  ├─ architecture.md
 │  ├─ configuration.md
+│  ├─ data-and-features.md
 │  └─ temporal-contract.md
 ├─ sql/
 │  ├─ schema.sql
@@ -28,9 +31,11 @@ quant-portfolio/
 │  │  │  ├─ settings.py
 │  │  │  ├─ db.py
 │  │  │  ├─ storage.py
-│  │  │  └─ ids.py
+│  │  │  ├─ ids.py
+│  │  │  └─ universe.py
 │  │  ├─ pipeline/
 │  │  │  ├─ ingest.py
+│  │  │  ├─ data_quality.py
 │  │  │  ├─ features.py
 │  │  │  ├─ regimes.py
 │  │  │  ├─ mc.py
@@ -53,6 +58,7 @@ quant-portfolio/
 │  ├─ raw/                     # fichiers bruts
 │  ├─ parquet/
 │  │  ├─ prices/
+│  │  ├─ fx/
 │  │  ├─ features/
 │  │  ├─ regimes/
 │  │  ├─ mc/
@@ -60,6 +66,7 @@ quant-portfolio/
 │  │  ├─ trades/
 │  │  ├─ positions/
 │  │  └─ backtests/
+│  └─ quality/                 # audits JSON ingestion et features
 ├─ artifacts/
 ├─ tests/
 └─ notebooks/

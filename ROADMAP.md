@@ -17,18 +17,18 @@ La priorité est la validité du protocole de recherche. L'optimisation des perf
 
 | Composant | État | Commentaire |
 |---|---:|---|
-| Ingestion Yahoo Finance | 🚧 Partiel | Téléchargement incrémental et stockage Parquet présents, univers encore codé en dur |
-| Cache SQLite | 🚧 Partiel | Tables créées depuis Python, fichiers SQL et migrations absents |
-| Feature engineering | 🚧 Partiel | Features marché et cross-sectionnelles présentes, proxy marché et calcul incrémental à corriger |
+| Ingestion Yahoo Finance | ✅ Robuste | Univers YAML versionné, actifs/FX incrémentaux et audit qualité explicite |
+| Cache SQLite | ✅ Opérationnel | Schéma et vues versionnés, fraîcheur prix/features centralisée |
+| Feature engineering | ✅ Robuste | Proxy rebasé sur rendements EUR, breadth corrigé et incrémental idempotent |
 | Modèle de covariance | 🚧 Partiel | Estimateurs présents, validation et intégration walk-forward à compléter |
 | Régimes HMM | 🚧 Prototype | États et probabilités présents, mais entraînement non walk-forward et états non interprétés |
 | Monte-Carlo | 🚧 Prototype | Simulation gaussienne présente, mais pas encore appliquée au portefeuille réel |
 | Optimisation | 🚧 Prototype | Heuristique inverse-variance, contraintes et coûts non intégrés dans le solveur |
 | Risk overlay quotidien | ⬜ À faire | Vol targeting, stress cut et gestion de la poche cash |
-| Backtest | 🚧 Prototype | Rebalancement et coûts présents, comptabilité et timing d'exécution à corriger |
+| Backtest | ✅ Fiable | Exécution décalée, cash, coûts, turnover et dérive des poids testés |
 | Ablations et reporting | ⬜ À faire | Rapport, attribution par régime et comparaison des variantes absents |
 | C++ | 🚧 Prototype | MC compilable, binding Python non importable et optimisation C++ absente |
-| Tests et CI | ⬜ À faire | Aucun véritable test automatisé ni workflow CI |
+| Tests et CI | 🚧 Partiel | Tests unitaires déterministes présents ; workflow CI reste à faire |
 
 ## Principes obligatoires
 
@@ -109,27 +109,27 @@ La priorité est la validité du protocole de recherche. L'optimisation des perf
 
 ### Univers et qualité des données
 
-- [ ] Définir un univers fixe et versionné pour chaque expérience.
-- [ ] Traiter explicitement les tickers sans données ou délistés.
-- [ ] Documenter le survivorship bias et la source des constituants.
-- [ ] Définir la devise de référence du portefeuille.
-- [ ] Ajouter les conversions FX nécessaires ou limiter l'univers à une devise homogène.
-- [ ] Contrôler doublons, dates manquantes, prix non positifs et corporate actions.
+- [x] Définir un univers fixe et versionné pour chaque expérience.
+- [x] Traiter explicitement les tickers sans données ou délistés.
+- [x] Documenter le survivorship bias et la source des constituants.
+- [x] Définir la devise de référence du portefeuille.
+- [x] Ajouter les conversions FX nécessaires ou limiter l'univers à une devise homogène.
+- [x] Contrôler doublons, dates manquantes, prix non positifs et corporate actions.
 
 ### Feature engineering
 
-- [ ] Construire le proxy marché à partir de rendements ou de séries rebasées, pas de niveaux de prix bruts.
-- [ ] Corriger les dénominateurs des mesures de breadth quand des actifs sont manquants.
-- [ ] Utiliser une fenêtre incrémentale suffisante pour les features à 200/252 jours.
-- [ ] Garantir l'idempotence des écritures Parquet.
-- [ ] Vérifier que recomputation complète et mise à jour incrémentale donnent les mêmes résultats.
-- [ ] Produire un rapport de qualité des features : couverture, NaN, outliers et stabilité.
+- [x] Construire le proxy marché à partir de rendements ou de séries rebasées, pas de niveaux de prix bruts.
+- [x] Corriger les dénominateurs des mesures de breadth quand des actifs sont manquants.
+- [x] Utiliser une fenêtre incrémentale suffisante pour les features à 200/252 jours.
+- [x] Garantir l'idempotence des écritures Parquet.
+- [x] Vérifier que recomputation complète et mise à jour incrémentale donnent les mêmes résultats.
+- [x] Produire un rapport de qualité des features : couverture, NaN, outliers et stabilité.
 
 ### Critères d'acceptation
 
-- [ ] Les résultats incrémentaux sont identiques aux résultats d'une recomputation complète.
-- [ ] Toutes les features documentent leur fenêtre, fréquence et convention d'annualisation.
-- [ ] Le proxy marché est invariant au niveau nominal des cours et cohérent entre devises.
+- [x] Les résultats incrémentaux sont identiques aux résultats d'une recomputation complète.
+- [x] Toutes les features documentent leur fenêtre, fréquence et convention d'annualisation.
+- [x] Le proxy marché est invariant au niveau nominal des cours et cohérent entre devises.
 
 ---
 

@@ -43,6 +43,10 @@ quant-portfolio backtest --run-id experiment-001
 quant-portfolio report --run-id experiment-001
 ```
 
+`ingest` télécharge actifs et séries FX définis par fichier d'univers. `features`
+refuse calcul multi-devise si série FX requise manque. Audits sont écrits sous
+`data/quality/`.
+
 Le pipeline complet peut être lancé avec :
 
 ```bash
@@ -70,7 +74,7 @@ L'installation éditable reste recommandée, car elle rend les imports identique
 
 ```bash
 python -m compileall -q src/quant_portfolio
-pytest tests/test_cli.py tests/test_ids.py tests/test_backtest.py
+pytest tests/test_cli.py tests/test_ids.py tests/test_backtest.py tests/test_features.py
 ```
 
 Les tests de backtest utilisent des données synthétiques locales et ne téléchargent rien.

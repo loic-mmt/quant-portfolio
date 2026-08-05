@@ -7,6 +7,7 @@ Cette documentation décrit le fonctionnement exécutable du projet. Le `README.
 - [Installation et commandes](getting-started.md) — créer l'environnement et lancer chaque étape.
 - [Architecture du pipeline](architecture.md) — responsabilités des modules et artefacts produits.
 - [Configuration](configuration.md) — univers, backtest et paramètres communs.
+- [Données et features](data-and-features.md) — univers versionné, FX, contrôles qualité et catalogue des features.
 - [Contrat temporel du backtest](temporal-contract.md) — information, décision, exécution, cash et coûts.
 
 ## Règle de lecture

@@ -4,6 +4,7 @@
 
 ```text
 config/                     paramètres versionnés
+  universes/                constituants, devises, provenance et FX
 data/
   _meta.db                  fraîcheur et résumés SQLite
   parquet/                  séries et artefacts lourds
@@ -24,7 +25,7 @@ tests/                      tests déterministes
 ```text
 Yahoo Finance
     ↓
-prices (Parquet) + fraîcheur (SQLite)
+prices + fx (Parquet) + fraîcheur (SQLite) + audit qualité
     ↓
 features/assets + features/regime
     ↓
@@ -52,6 +53,19 @@ Valide les identifiants utilisés dans les partitions et crée des IDs UTC triab
 ### `core/storage.py`
 
 Lit et écrit les datasets Parquet partitionnés. Un run d'optimisation ou de backtest est toujours sélectionné par son `run_id`. En l'absence d'ID explicite, le dernier ID disponible est choisi.
+
+Snapshots features sont écrits dans répertoire temporaire, puis remplacés par
+renommage atomique. Clés `(date)` et `(ticker, date)` restent uniques.
+
+### `core/universe.py`
+
+Valide fichier d'univers, couverture devises et séries FX. Expose fingerprint
+SHA-256 permettant d'identifier exactement définition utilisée.
+
+### `pipeline/data_quality.py`
+
+Nettoie prix, convertit vers devise de référence sans taux futur et produit audits
+prix/features sous `data/quality/`.
 
 ### `pipeline/backtest.py`
 

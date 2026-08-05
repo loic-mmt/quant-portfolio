@@ -11,9 +11,11 @@
 | `end_date` | Borne optionnelle de téléchargement |
 | `log_level` | Niveau de log par défaut |
 | `random_seed` | Seed commun destiné aux modèles stochastiques |
-| `tickers` | Univers fixe et versionné de l'expérience |
+| `universe_file` | Fichier YAML versionné définissant constituants, devises, FX et provenance |
 
-Les tickers sont normalisés en majuscules. Les doublons et listes vides provoquent une erreur avant le lancement du pipeline.
+Fichier d'univers possède `universe_id`, version entière et fingerprint SHA-256.
+Tickers et devises sont normalisés en majuscules. Doublons, liste vide ou taux FX
+manquant provoquent erreur avant lancement. Voir [Données et features](data-and-features.md).
 
 ## Configuration du backtest
 
@@ -50,9 +52,10 @@ Sans identifiant, un ID UTC est créé. Un même ID doit relier les poids, trade
 
 Les modes d'écriture Parquet sont :
 
-- `overwrite_or_ignore` : mode incrémental par défaut ;
-- `overwrite` : remplace les partitions correspondantes ;
+- `overwrite_or_ignore` : fusion incrémentale idempotente par défaut ;
+- `overwrite` : snapshot complet ;
 - `delete_matching` : comportement Arrow explicite de remplacement ;
 - `error` : échoue si la destination existe.
 
-Utiliser `overwrite` uniquement lorsque le recalcul de la période concernée est intentionnel.
+Pour features, écriture finale remplace snapshot complet de façon atomique après fusion.
+Utiliser `overwrite` lorsque recalcul historique complet est intentionnel.

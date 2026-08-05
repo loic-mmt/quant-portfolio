@@ -78,7 +78,7 @@ L’objectif n’est pas de “prédire le futur” au sens naïf. L’objectif 
 ## System Overview
 
 **Inputs**
-- Equity close prices (adjusted if available) for ~40–50 tickers.
+- Equity close prices (adjusted if available) for versioned 55-ticker snapshot.
 - Market proxy (index / aggregate of universe).
 - Optional: sector tags for diversification constraints.
 
@@ -101,8 +101,9 @@ L’objectif n’est pas de “prédire le futur” au sens naïf. L’objectif 
 ## Data
 
 ### Universe
-- 40–50 equities (long-only).
-- The universe should be fixed for the backtest period (avoid changing constituents if possible).
+- 55 equities (long-only) from a versioned YAML snapshot.
+- Constituents, local currencies, FX series, provenance, and known survivorship bias are explicit.
+- Reference currency is EUR; local prices are converted using only FX data available at each date.
 
 ### Frequency
 - Daily closes (close-to-close returns).
@@ -125,8 +126,10 @@ The project is structured as a deterministic pipeline:
    - Align dates, clean missing values, build returns.
 
 2. **Feature Engineering**
+   - Validate prices and FX, then build scale-invariant market proxy from returns.
    - Build market features (vol, momentum, drawdown, vol-of-vol).
    - Build cross-sectional features (avg correlation, dispersion, breadth).
+   - Emit coverage, NaN, outlier and stability quality report.
 
 3. **Regime Detection**
    - Fit/Update regime model on a rolling training window.
@@ -327,7 +330,8 @@ quant-portfolio run-all --run-id experiment-001
 ```
 
 La documentation détaillée est disponible dans [`docs/`](docs/README.md), notamment le
-[contrat temporel du backtest](docs/temporal-contract.md).
+[contrat temporel du backtest](docs/temporal-contract.md) et le contrat
+[données/features](docs/data-and-features.md).
 
 ---
 
@@ -356,7 +360,7 @@ La documentation détaillée est disponible dans [`docs/`](docs/README.md), nota
 - Without options, hedging is limited; stress regime response is mainly **de-risking / cash**.
 - Regime models can lag; overly frequent state switching is a risk (mitigated by probabilities + smoothing).
 - Results depend on realistic costs and turnover constraints.
-- If the universe changes over time, survivorship bias may affect the backtest.
+- Legacy 2024 snapshot is not point-in-time constituent history; survivorship and selection bias remain.
 
 ---
 
