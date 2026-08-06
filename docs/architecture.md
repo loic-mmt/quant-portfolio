@@ -29,7 +29,7 @@ prices + fx (Parquet) + fraîcheur (SQLite) + audit qualité
     ↓
 features/assets + features/regime
     ↓
-regimes
+HMM recalibré walk-forward → régimes filtrés et confirmés
     ↓
 Monte-Carlo conditionnel
     ↓
@@ -66,6 +66,12 @@ SHA-256 permettant d'identifier exactement définition utilisée.
 
 Nettoie prix, convertit vers devise de référence sans taux futur et produit audits
 prix/features sous `data/quality/`.
+
+### `pipeline/regimes.py`
+
+Recalibre scaler et HMM sur passé strict, filtre prochaine période, transforme états
+bruts en `calm/choppy/stress`, applique confirmation 20/60 et écrit paramètres JSON.
+Voir [Régimes walk-forward](regimes.md).
 
 ### `pipeline/backtest.py`
 

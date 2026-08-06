@@ -168,6 +168,11 @@ Recommended: **HMM with K=3 states**, interpreted as:
 
 **Important**: regime detection is trained on multiple years (if available) and tested on the project year out-of-sample.
 
+Implementation is walk-forward: scaler and HMM train strictly before each configurable
+recalibration date. Daily probabilities use causal forward filtering. Raw state numbers
+are remapped from posterior-weighted economic profiles, then confirmed through explicit
+20-day / 60-day hysteresis. See [`docs/regimes.md`](docs/regimes.md).
+
 ---
 
 ## Risk Modeling (Monte-Carlo)

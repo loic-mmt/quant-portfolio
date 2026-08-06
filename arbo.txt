@@ -20,6 +20,7 @@ quant-portfolio/
 │  ├─ architecture.md
 │  ├─ configuration.md
 │  ├─ data-and-features.md
+│  ├─ regimes.md
 │  └─ temporal-contract.md
 ├─ sql/
 │  ├─ schema.sql
@@ -66,7 +67,8 @@ quant-portfolio/
 │  │  ├─ trades/
 │  │  ├─ positions/
 │  │  └─ backtests/
-│  └─ quality/                 # audits JSON ingestion et features
+│  ├─ quality/                 # audits JSON ingestion, features et régimes
+│  └─ artifacts/regimes/       # paramètres/scaler/mapping par recalibration
 ├─ artifacts/
 ├─ tests/
 └─ notebooks/

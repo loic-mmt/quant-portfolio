@@ -86,3 +86,14 @@ Les tests imposent notamment que :
 - un portefeuille mono-actif réconcilie un buy-and-hold ;
 - les positions et le cash somment à la valeur totale ;
 - l'allocation initiale soit facturée.
+
+## Régimes
+
+Pipeline régimes respecte même contrat : à recalibration `c`, scaler et HMM voient
+uniquement dates `< c`. Modèle figé produit prochaine période. Probabilité date `t`
+est filtrée avec observations jusqu'à `t`, jamais lissée avec futur. Confirmation
+20/60 utilise seulement historique courant et antérieur.
+
+Régime calculé après clôture `t` peut informer décision `t`, exécutée au plus tôt
+prochain jour de marché selon convention ci-dessus. Artefacts HMM plus anciens doivent
+être recalculés ; correction ne les rend pas rétroactivement out-of-sample.

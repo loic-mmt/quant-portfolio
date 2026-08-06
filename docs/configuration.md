@@ -59,3 +59,23 @@ Les modes d'écriture Parquet sont :
 
 Pour features, écriture finale remplace snapshot complet de façon atomique après fusion.
 Utiliser `overwrite` lorsque recalcul historique complet est intentionnel.
+
+## Configuration des régimes
+
+`config/regimes.yaml` contient :
+
+| Champ | Rôle |
+|---|---|
+| `n_states` | Nombre d'états HMM bruts, minimum 3 |
+| `random_seed` | Initialisation déterministe |
+| `covariance_type` | `diag`, `full`, `tied` ou `spherical` |
+| `n_iter`, `tol`, `min_covar` | Convergence et stabilité numérique |
+| `min_train_size` | Historique minimal avant première prédiction |
+| `train_window` | Taille fenêtre roulante ; `null` pour expansive |
+| `recalibration_frequency` | `D`, `20B`, `W`, `M`, `Q`, etc. |
+| `confidence_threshold` | Confiance instantanée minimale pour transition |
+| `confirmation` | Fenêtres et seuils courts/longs 20/60 |
+| `regime_features` | Colonnes ordonnées utilisées par scaler/HMM |
+
+Changer seed, fenêtre, features ou fréquence définit expérience différente. Chaque
+calibration conserve copie exacte configuration dans artefact JSON.

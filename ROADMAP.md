@@ -21,7 +21,7 @@ La priorité est la validité du protocole de recherche. L'optimisation des perf
 | Cache SQLite | ✅ Opérationnel | Schéma et vues versionnés, fraîcheur prix/features centralisée |
 | Feature engineering | ✅ Robuste | Proxy rebasé sur rendements EUR, breadth corrigé et incrémental idempotent |
 | Modèle de covariance | 🚧 Partiel | Estimateurs présents, validation et intégration walk-forward à compléter |
-| Régimes HMM | 🚧 Prototype | États et probabilités présents, mais entraînement non walk-forward et états non interprétés |
+| Régimes HMM | ✅ Walk-forward | Filtrage causal, mapping économique, confirmation 20/60 et artefacts par calibration |
 | Monte-Carlo | 🚧 Prototype | Simulation gaussienne présente, mais pas encore appliquée au portefeuille réel |
 | Optimisation | 🚧 Prototype | Heuristique inverse-variance, contraintes et coûts non intégrés dans le solveur |
 | Risk overlay quotidien | ⬜ À faire | Vol targeting, stress cut et gestion de la poche cash |
@@ -137,26 +137,26 @@ La priorité est la validité du protocole de recherche. L'optimisation des perf
 
 ### Modèle
 
-- [ ] Paramétrer le nombre d'états, le seed, le type de covariance et les fenêtres d'entraînement.
-- [ ] Entraîner le scaler et le HMM uniquement sur la fenêtre historique autorisée.
-- [ ] Recalibrer le modèle selon une fréquence configurable.
-- [ ] Utiliser des probabilités filtrées disponibles en temps réel, pas des états lissés avec le futur.
-- [ ] Produire les états et probabilités uniquement pour la période suivante.
-- [ ] Sauvegarder les paramètres et métadonnées de chaque recalibration.
+- [x] Paramétrer le nombre d'états, le seed, le type de covariance et les fenêtres d'entraînement.
+- [x] Entraîner le scaler et le HMM uniquement sur la fenêtre historique autorisée.
+- [x] Recalibrer le modèle selon une fréquence configurable.
+- [x] Utiliser des probabilités filtrées disponibles en temps réel, pas des états lissés avec le futur.
+- [x] Produire les états et probabilités uniquement pour la période suivante.
+- [x] Sauvegarder les paramètres et métadonnées de chaque recalibration.
 
 ### Interprétation et stabilité
 
-- [ ] Mapper chaque état brut vers `calm`, `choppy` ou `stress` à partir de ses statistiques.
-- [ ] Garantir que le mapping ne dépend pas du numéro arbitraire attribué par le HMM.
-- [ ] Ajouter un seuil de confiance et une règle de transition/hysteresis.
-- [ ] Implémenter la confirmation 20 jours / 60 jours annoncée dans le README.
-- [ ] Produire durée moyenne, matrice de transition, occupation et profil de chaque régime.
+- [x] Mapper chaque état brut vers `calm`, `choppy` ou `stress` à partir de ses statistiques.
+- [x] Garantir que le mapping ne dépend pas du numéro arbitraire attribué par le HMM.
+- [x] Ajouter un seuil de confiance et une règle de transition/hysteresis.
+- [x] Implémenter la confirmation 20 jours / 60 jours annoncée dans le README.
+- [x] Produire durée moyenne, matrice de transition, occupation et profil de chaque régime.
 
 ### Critères d'acceptation
 
-- [ ] Les régimes passés ne changent pas lorsque des données futures sont ajoutées.
-- [ ] Chaque état possède une interprétation économique calculée et documentée.
-- [ ] Deux runs avec le même seed et les mêmes données produisent les mêmes résultats.
+- [x] Les régimes passés ne changent pas lorsque des données futures sont ajoutées.
+- [x] Chaque état possède une interprétation économique calculée et documentée.
+- [x] Deux runs avec le même seed et les mêmes données produisent les mêmes résultats.
 
 ---
 
