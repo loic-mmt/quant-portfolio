@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from pathlib import Path
 import sqlite3
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
@@ -325,15 +324,22 @@ def upsert_regime_last_dates(
     df = df.loc[ok].copy()
     df[date_col] = dt.loc[ok].dt.strftime("%Y-%m-%d")
 
-    last_by_ticker = df.groupby(ticker_col)[date_col].max()
+    latest_rows = df.sort_values(date_col).groupby(ticker_col, as_index=False).tail(1)
     sql = """
-    INSERT INTO regimes_last_dates (feature, ticker, date)
-    VALUES (?, ?, ?)
+    INSERT INTO regimes_last_dates (feature, ticker, date, state, proba)
+    VALUES (?, ?, ?, ?, ?)
     ON CONFLICT(feature, ticker) DO UPDATE SET
-      date = excluded.date;
+      date = excluded.date,
+      state = excluded.state,
+      proba = excluded.proba;
     """
-    for ticker, last_date in last_by_ticker.items():
-        conn.execute(sql, (feature, str(ticker), str(last_date)))
+    for _, row in latest_rows.iterrows():
+        state = int(row["state"]) if "state" in row and pd.notna(row["state"]) else None
+        proba = float(row["proba"]) if "proba" in row and pd.notna(row["proba"]) else None
+        conn.execute(
+            sql,
+            (feature, str(row[ticker_col]), str(row[date_col]), state, proba),
+        )
     conn.commit()
 
 
