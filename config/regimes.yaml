@@ -1,4 +1,19 @@
-train_end: "2024-01-01"
+n_states: 3
+random_seed: 42
+covariance_type: diag
+n_iter: 300
+tol: 0.001
+min_covar: 0.000001
+min_train_size: 504
+train_window: 1260
+recalibration_frequency: M
+confidence_threshold: 0.55
+confirmation:
+  short_days: 20
+  short_share: 0.60
+  long_days: 60
+  long_probability: 0.40
+
 regime_features:
   - mom_mkt_20
   - mom_mkt_60
