@@ -2,13 +2,17 @@
 
 Ce document définit la convention anti-look-ahead utilisée par le projet.
 
-> Cette convention est maintenant appliquée au moteur de backtest et à la fenêtre de l'optimiseur. Le HMM et la calibration Monte-Carlo historiques doivent encore être convertis en walk-forward dans les jalons 3 et 4 ; les anciens artefacts de régime et de backtest ne deviennent donc pas automatiquement out-of-sample.
+> Cette convention est appliquée au backtest, au HMM, au MC et à l'optimisation.
+> Les anciens artefacts doivent être recalculés : les corrections ne rendent pas
+> rétroactivement un historique out-of-sample.
 
 ## Trois dates distinctes
 
 ### `information_date`
 
-Dernière date dont les données sont complètement observées. Une estimation réalisée à `t` ne peut utiliser que des rendements d'indice strictement antérieurs à `t`.
+Pour la calibration des rendements/covariances, dernière date historique utilisée,
+strictement antérieure à `t`. Le régime filtré et les poids effectifs après clôture
+`t` sont observables à la décision `t` ; ils ne contiennent aucun rendement futur.
 
 ### `decision_date`
 
@@ -97,3 +101,14 @@ est filtrée avec observations jusqu'à `t`, jamais lissée avec futur. Confirma
 Régime calculé après clôture `t` peut informer décision `t`, exécutée au plus tôt
 prochain jour de marché selon convention ci-dessus. Artefacts HMM plus anciens doivent
 être recalculés ; correction ne les rend pas rétroactivement out-of-sample.
+
+## MC et overlay
+
+Le MC est recalibré pour chaque décision sur le passé strict du régime courant.
+Les scénarios portent les poids effectivement détenus après clôture, puis ceux du
+candidat et de la cible. L'optimiseur partage la dérive comptable du backtest et
+son calendrier d'exécution, même avec un délai supérieur à une séance.
+
+Les fréquences de recomposition utilisent la première séance de chaque période
+calendaire. Ajouter des données en fin de semaine/mois ne déplace donc aucune
+décision passée. Voir [Risque et allocation](risk-allocation.md).

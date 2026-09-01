@@ -27,6 +27,7 @@ manquant provoquent erreur avant lancement. Voir [Données et features](data-and
 | `transaction_bps` | `1.0` | Frais proportionnels au turnover |
 | `slippage_bps` | `2.0` | Slippage proportionnel au turnover |
 | `turnover_cap` | `null` | Turnover maximal par exécution |
+| `exposure_change_cap` | `null` | Variation maximale d'exposition par exécution ; combinée avec la limite de l'overlay |
 | `initial_capital` | `100000` | Valeur initiale du portefeuille |
 | `cash_rate_annual` | `0.0` | Rendement annualisé de la poche cash |
 | `execution_lag_days` | `1` | Nombre de jours de marché après la décision ; minimum obligatoire : 1 |
@@ -79,3 +80,25 @@ Utiliser `overwrite` lorsque recalcul historique complet est intentionnel.
 
 Changer seed, fenêtre, features ou fréquence définit expérience différente. Chaque
 calibration conserve copie exacte configuration dans artefact JSON.
+
+## Risque, solveur et overlay
+
+`config/mc.yaml` définit simulations, horizons 5/20, fenêtre, observations minimales,
+seed, distribution principale, distributions de comparaison, degrés de liberté
+Student-t et seuils de perte/drawdown. `sparse_regime_policy` choisit le repli
+historique explicite `pooled` ou le mode strict `error`.
+
+`config/optimize.yaml` définit bornes individuelles, fréquence de recomposition,
+cash, volatilité cible, hysteresis, vitesse, turnover, pénalités du solveur et
+politiques par régime. Les options `use_regimes`, `use_mc` et `use_overlay`
+permettent des variantes séparées. Les contraintes sectorielles exigent un champ
+`sector` pour chaque actif de l'univers versionné.
+
+Le détail des unités, contraintes dures, objectifs souples et cas infaisables est
+documenté dans [Risque et allocation](risk-allocation.md). Les frais de l'objectif
+proviennent de la même configuration que ceux du backtest.
+
+Les nouveaux runs d'optimisation sont immuables. Un nouveau calcul nécessite un
+nouvel ID, même avec `--existing-data-behavior overwrite`. Leur configuration
+d'exécution sauvegardée est réutilisée par le backtest. La commande MC exige un ID
+existant et écrit un replay séparé ; elle ne modifie pas les risques du run initial.

@@ -37,15 +37,20 @@ Commandes disponibles :
 quant-portfolio ingest
 quant-portfolio features
 quant-portfolio regimes
-quant-portfolio mc
 quant-portfolio optimize --run-id experiment-001
 quant-portfolio backtest --run-id experiment-001
+quant-portfolio mc --run-id experiment-001  # Replay optionnel des risques
 quant-portfolio report --run-id experiment-001
 ```
 
 `ingest` télécharge actifs et séries FX définis par fichier d'univers. `features`
 refuse calcul multi-devise si série FX requise manque. Audits sont écrits sous
 `data/quality/`.
+
+`optimize` intègre désormais MC et overlay quotidien. `mc` exige un run existant
+et réévalue ses poids sans écraser les risques originaux. Choisir un nouvel ID pour
+chaque optimisation. Le backtest réutilise la configuration sauvegardée du run.
+Voir [Risque et allocation](risk-allocation.md).
 
 Le pipeline complet peut être lancé avec :
 

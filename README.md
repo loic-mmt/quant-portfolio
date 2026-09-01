@@ -322,9 +322,9 @@ Commandes :
 quant-portfolio ingest
 quant-portfolio features
 quant-portfolio regimes
-quant-portfolio mc
 quant-portfolio optimize --run-id experiment-001
 quant-portfolio backtest --run-id experiment-001
+quant-portfolio mc --run-id experiment-001  # Replay optionnel, MC déjà intégré à optimize
 quant-portfolio report --run-id experiment-001
 ```
 
@@ -336,7 +336,14 @@ quant-portfolio run-all --run-id experiment-001
 
 La documentation détaillée est disponible dans [`docs/`](docs/README.md), notamment le
 [contrat temporel du backtest](docs/temporal-contract.md) et le contrat
-[données/features](docs/data-and-features.md).
+[données/features](docs/data-and-features.md) et le guide
+[risque, allocation contrainte et overlay quotidien](docs/risk-allocation.md).
+
+Le jalon 4 est implémenté : MC causal pondéré (gaussienne/Student-t), solveur
+minimum-variance contraint et overlay quotidien avec cash. Chaque optimisation
+utilise un nouvel ID et conserve ses décisions, risques et configurations. Les
+anciens artefacts MC doivent être recalculés ; les hypothèses et limites du modèle
+restent détaillées dans `docs/`.
 
 ---
 

@@ -31,9 +31,9 @@ features/assets + features/regime
     ↓
 HMM recalibré walk-forward → régimes filtrés et confirmés
     ↓
-Monte-Carlo conditionnel
+allocation contrainte + MC pondéré + overlay quotidien
     ↓
-target weights
+target weights + décisions + risques (même run_id)
     ↓ décision à t, exécution à t+1
 backtests + trades + positions
     ↓
@@ -77,11 +77,24 @@ Voir [Régimes walk-forward](regimes.md).
 
 Le backtest part de 100 % cash. Il transforme les poids cibles datés en ordres exécutés, applique coûts et turnover, calcule les rendements puis fait dériver les poids jusqu'au prochain ordre.
 
+### `pipeline/optimize.py`, `pipeline/mc.py` et `models/allocation.py`
+
+L'optimiseur suit les positions effectives avec la comptabilité partagée de
+`core/portfolio.py`. Il calibre MC sur le passé, résout les contraintes puis
+applique l'overlay quotidien. Les risques du portefeuille détenu, du candidat
+et de la cible sont distincts. La commande `mc --run-id ...` rejoue les poids
+sauvegardés ; ses résultats ne sont jamais réinjectés dans les décisions passées.
+Voir [Risque et allocation](risk-allocation.md).
+
 ## Artefacts d'un backtest
 
 | Dataset | Contenu |
 |---|---|
 | `weights` | Poids cibles à la date de décision |
+| `decisions` | Historique quotidien des expositions, contrôles de risque et statuts solveur |
+| `mc` | Risques pondérés effectifs/candidats/cibles par horizon et distribution |
+| `risk_weights` | Poids exacts et univers de calibration utilisés par MC |
+| `mc_replay` | Réévaluation séparée des poids sauvegardés |
 | `trades` | Deltas exécutés, sens et notionnel |
 | `positions` | Poids et valeur de chaque actif après clôture, cash inclus |
 | `backtests` | Valeur, rendement net, coût, turnover et exposition quotidienne |
