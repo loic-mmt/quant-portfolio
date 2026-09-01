@@ -20,11 +20,11 @@ La priorité est la validité du protocole de recherche. L'optimisation des perf
 | Ingestion Yahoo Finance | ✅ Robuste | Univers YAML versionné, actifs/FX incrémentaux et audit qualité explicite |
 | Cache SQLite | ✅ Opérationnel | Schéma et vues versionnés, fraîcheur prix/features centralisée |
 | Feature engineering | ✅ Robuste | Proxy rebasé sur rendements EUR, breadth corrigé et incrémental idempotent |
-| Modèle de covariance | 🚧 Partiel | Estimateurs présents, validation et intégration walk-forward à compléter |
+| Modèle de covariance | ✅ Intégré | Shrinkage, conditionnement et contrôle des historiques paire à paire |
 | Régimes HMM | ✅ Walk-forward | Filtrage causal, mapping économique, confirmation 20/60 et artefacts par calibration |
-| Monte-Carlo | 🚧 Prototype | Simulation gaussienne présente, mais pas encore appliquée au portefeuille réel |
-| Optimisation | 🚧 Prototype | Heuristique inverse-variance, contraintes et coûts non intégrés dans le solveur |
-| Risk overlay quotidien | ⬜ À faire | Vol targeting, stress cut et gestion de la poche cash |
+| Monte-Carlo | ✅ Causal et pondéré | Poids effectifs/candidats/cibles, horizons 5/20 et comparaison gaussienne/Student-t |
+| Optimisation | ✅ Contrainte | Minimum-variance CVXPY, coûts, turnover, secteurs et statuts vérifiés |
+| Risk overlay quotidien | ✅ Implémenté | Ciblage de volatilité, stress cut, cash, hysteresis et gouverneurs décision/exécution |
 | Backtest | ✅ Fiable | Exécution décalée, cash, coûts, turnover et dérive des poids testés |
 | Ablations et reporting | ⬜ À faire | Rapport, attribution par régime et comparaison des variantes absents |
 | C++ | 🚧 Prototype | MC compilable, binding Python non importable et optimisation C++ absente |
@@ -164,44 +164,49 @@ La priorité est la validité du protocole de recherche. L'optimisation des perf
 
 ### Monte-Carlo conditionnel au régime
 
-- [ ] Calibrer `mu` et `Sigma` pour chaque date uniquement avec les observations passées du régime concerné.
-- [ ] Utiliser la covariance shrinkée et conditionnée du module `models/covariance.py`.
-- [ ] Simuler la distribution du portefeuille avec ses poids effectifs.
-- [ ] Supporter les horizons 5 jours et 20 jours.
-- [ ] Ajouter un seed configurable.
-- [ ] Calculer et stocker :
-  - [ ] VaR 1 % et 5 % ;
-  - [ ] CVaR 1 % et 5 % ;
-  - [ ] quantiles de PnL ;
-  - [ ] probabilité de perte au-delà d'un seuil ;
-  - [ ] probabilité de drawdown au-delà d'un seuil.
-- [ ] Évaluer une loi Student-t ou un bootstrap historique comme alternative gaussienne.
+- [x] Calibrer `mu` et `Sigma` pour chaque date uniquement avec les observations passées du régime concerné.
+- [x] Utiliser la covariance shrinkée et conditionnée du module `models/covariance.py`.
+- [x] Simuler la distribution du portefeuille avec ses poids effectifs.
+- [x] Supporter les horizons 5 jours et 20 jours.
+- [x] Ajouter un seed configurable.
+- [x] Calculer et stocker :
+  - [x] VaR 1 % et 5 % ;
+  - [x] CVaR 1 % et 5 % ;
+  - [x] quantiles de PnL ;
+  - [x] probabilité de perte au-delà d'un seuil ;
+  - [x] probabilité de drawdown au-delà d'un seuil.
+- [x] Évaluer une loi Student-t ou un bootstrap historique comme alternative gaussienne.
 
 ### Optimisation contrainte
 
-- [ ] Remplacer l'heuristique inverse-variance par un vrai problème `min wᵀΣw`.
-- [ ] Respecter exactement `min_weight`, `max_weight`, long-only et exposition totale.
-- [ ] Intégrer turnover, coûts et distance aux poids précédents dans l'objectif.
-- [ ] Ajouter les contraintes sectorielles si les métadonnées sont disponibles.
-- [ ] Ajouter une contrainte ou pénalité de volatilité cible.
-- [ ] Définir les politiques de concentration et d'exposition par régime.
-- [ ] Vérifier le statut du solveur et rendre explicite toute solution de repli.
+- [x] Remplacer l'heuristique inverse-variance par un vrai problème `min wᵀΣw`.
+- [x] Respecter exactement `min_weight`, `max_weight`, long-only et exposition totale.
+- [x] Intégrer turnover, coûts et distance aux poids précédents dans l'objectif.
+- [x] Ajouter les contraintes sectorielles si les métadonnées sont disponibles.
+- [x] Ajouter une contrainte ou pénalité de volatilité cible.
+- [x] Définir les politiques de concentration et d'exposition par régime.
+- [x] Vérifier le statut du solveur et rendre explicite toute solution de repli.
 
 ### Risk overlay quotidien
 
-- [ ] Estimer la volatilité prévisionnelle ou réalisée à chaque date.
-- [ ] Calculer un multiplicateur d'exposition `target_vol / forecast_vol` borné.
-- [ ] Appliquer un stress cut fondé sur le régime et les métriques MC.
-- [ ] Autoriser une poche cash pour rendre le de-risking effectif.
-- [ ] Ajouter hysteresis, vitesse maximale de variation et turnover governor.
-- [ ] Journaliser chaque décision de réduction ou de restauration de l'exposition.
+- [x] Estimer la volatilité prévisionnelle ou réalisée à chaque date.
+- [x] Calculer un multiplicateur d'exposition `target_vol / forecast_vol` borné.
+- [x] Appliquer un stress cut fondé sur le régime et les métriques MC.
+- [x] Autoriser une poche cash pour rendre le de-risking effectif.
+- [x] Ajouter hysteresis, vitesse maximale de variation et turnover governor.
+- [x] Journaliser chaque décision de réduction ou de restauration de l'exposition.
 
 ### Critères d'acceptation
 
-- [ ] Toutes les contraintes sont vérifiées numériquement après optimisation.
-- [ ] Le risque MC correspond au portefeuille pondéré, pas à la somme non pondérée des actifs.
-- [ ] Une hausse de volatilité réduit effectivement l'exposition lorsque le cash est autorisé.
-- [ ] Désactiver régimes ou MC produit des variantes distinctes et reproductibles.
+- [x] Toutes les contraintes sont vérifiées numériquement après optimisation.
+- [x] Le risque MC correspond au portefeuille pondéré, pas à la somme non pondérée des actifs.
+- [x] Une hausse de volatilité réduit effectivement l'exposition lorsque le cash est autorisé.
+- [x] Désactiver régimes ou MC produit des variantes distinctes et reproductibles.
+
+Contrat et limites : [Risque et allocation](docs/risk-allocation.md). Le repli
+`pooled` sur régime trop court est configurable et explicitement tracé ; `error`
+impose le conditionnement strict. Secteurs optionnels, objectifs de risque souples
+sous gouverneurs durs. La comparaison empirique des stratégies reste au jalon 5.
 
 ---
 
