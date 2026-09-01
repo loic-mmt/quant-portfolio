@@ -20,6 +20,7 @@ class AssetDefinition:
     currency: str
     price_multiplier: float = 1.0
     status: str = "unknown"
+    sector: str | None = None
 
 
 @dataclass(frozen=True)
@@ -127,7 +128,10 @@ def load_universe(path: Path) -> UniverseDefinition:
             raise ValueError(f"Invalid status for {ticker}: {status}")
         if multiplier <= 0:
             raise ValueError(f"price_multiplier must be positive for {ticker}")
-        assets.append(AssetDefinition(ticker, currency, multiplier, status))
+        sector = item.get("sector")
+        if sector is not None and (not isinstance(sector, str) or not sector.strip()):
+            raise ValueError(f"sector must be a non-empty string for {ticker}")
+        assets.append(AssetDefinition(ticker, currency, multiplier, status, sector.strip() if sector else None))
 
     tickers = [asset.ticker for asset in assets]
     duplicates = sorted({ticker for ticker in tickers if tickers.count(ticker) > 1})

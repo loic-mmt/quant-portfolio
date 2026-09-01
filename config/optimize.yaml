@@ -1,12 +1,35 @@
 rebal_freq: "W"
 max_weight: 0.3
-min_weight: 0.01
-allow_cash: false
+min_weight: 0.0
+allow_cash: true
 lookback: 60
 
 # Regime/MC integration
 use_regimes: true
 use_mc: true
+use_overlay: true
 mc_horizon: 5
 risk_var_limit: 0.05
 risk_cvar_limit: 0.08
+
+# Annual volatility; exposure may recover/reduce by at most 10 points per decision.
+target_vol: 0.15
+min_exposure: 0.0
+max_exposure: 1.0
+min_multiplier: 0.0
+max_multiplier: 1.0
+hysteresis: 0.02
+max_exposure_change: 0.10
+turnover_governor: 0.15
+
+# Objective: annual variance + actual backtest fee rate + these penalties.
+turnover_penalty: 0.002
+distance_penalty: 0.01
+exposure_penalty: 100.0
+target_vol_penalty: 1.0
+solver: CLARABEL
+solver_fallback: error
+regime_exposure: {calm: 1.0, choppy: 0.7, stress: 0.4}
+regime_cap_scale: {calm: 1.0, choppy: 0.8, stress: 0.6}
+# Add a sector to every asset in the versioned universe before setting caps.
+sector_caps: {}

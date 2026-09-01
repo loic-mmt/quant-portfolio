@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, fields
 from pathlib import Path
 import logging
+import json
 
 import numpy as np
 import pandas as pd
@@ -27,6 +28,7 @@ except Exception:
 from quant_portfolio.core.db import init_backtest_db, upsert_backtest_summary
 from quant_portfolio.core.ids import ensure_run_id
 from quant_portfolio.core.settings import load_base_config
+from quant_portfolio.core.portfolio import drift_weights, execution_weights
 from quant_portfolio.pipeline.data_quality import load_reference_price_dataset
 
 
@@ -61,6 +63,20 @@ class BacktestConfig:
     missing_return_policy: str
     start_date: str | None
     end_date: str | None
+    exposure_change_cap: float | None = None
+
+    def __post_init__(self) -> None:
+        if type(self.execution_lag_days) is not int or self.execution_lag_days < 1:
+            raise ValueError("execution_lag_days must be an integer >= 1")
+        if not np.isfinite(self.cash_rate_annual) or self.cash_rate_annual <= -1:
+            raise ValueError("cash_rate_annual must be finite and > -1")
+        if self.return_type not in {"simple", "log"}:
+            raise ValueError("return_type must be simple or log")
+        if self.missing_return_policy not in {"cash", "zero", "error"}:
+            raise ValueError("missing_return_policy must be cash, zero or error")
+        for cap in (self.turnover_cap, self.exposure_change_cap):
+            if cap is not None and not 0 <= cap <= 1:
+                raise ValueError("Execution limits must be in [0, 1] or null")
 
 DEFAULT_CFG = BacktestConfig(
     rebal_freq="W",
@@ -481,13 +497,11 @@ def simulate_portfolio(
         scheduled = schedule.get(pd.Timestamp(date))
         if scheduled is not None:
             decision_date, requested_weights = scheduled
-            requested_cash = max(0.0, 1.0 - float(requested_weights.sum()))
-            executed_weights = apply_turnover_cap(
+            executed_weights = execution_weights(
                 risky_weights,
                 requested_weights,
                 cfg.turnover_cap,
-                prev_cash=cash_weight,
-                next_cash=requested_cash,
+                cfg.exposure_change_cap,
             )
             executed_cash = max(0.0, 1.0 - float(executed_weights.sum()))
             turnover = compute_turnover(
@@ -538,27 +552,14 @@ def simulate_portfolio(
 
         raw_returns = data.loc[date].to_numpy(dtype=float)
         simple_returns = np.expm1(raw_returns) if cfg.return_type == "log" else raw_returns.copy()
-        held_missing = np.isnan(simple_returns) & (risky_weights > 1e-14)
-        if held_missing.any() and cfg.missing_return_policy == "error":
-            missing_tickers = [ticker for ticker, flag in zip(tickers, held_missing, strict=False) if flag]
-            raise ValueError(f"missing returns for held assets on {date}: {missing_tickers}")
-        replacement = daily_cash_return if cfg.missing_return_policy == "cash" else 0.0
-        simple_returns = np.where(np.isnan(simple_returns), replacement, simple_returns)
-
-        gross_return = float(risky_weights @ simple_returns + cash_weight * daily_cash_return)
+        risky_weights, cash_weight, gross_return = drift_weights(
+            risky_weights, simple_returns, daily_cash_return, cfg.missing_return_policy
+        )
         growth = 1.0 + gross_return
         if growth <= 0:
             raise ValueError(f"portfolio value became non-positive on {date}")
         value *= growth
         net_return = value / start_value - 1.0
-
-        risky_weights = risky_weights * (1.0 + simple_returns) / growth
-        cash_weight = cash_weight * (1.0 + daily_cash_return) / growth
-        total_weight = float(risky_weights.sum() + cash_weight)
-        if total_weight <= 0:
-            raise ValueError("portfolio weights sum to zero after drift")
-        risky_weights /= total_weight
-        cash_weight /= total_weight
 
         result_rows.append(
             {
@@ -786,6 +787,7 @@ def write_backtest_outputs(
     run_id: str | None = None,
     trades: pd.DataFrame | None = None,
     positions: pd.DataFrame | None = None,
+    data_dir: Path | None = None,
 ) -> None:
     """Write backtest results to parquet and upsert summary in SQLite.
 
@@ -809,6 +811,7 @@ def write_backtest_outputs(
     if not summary:
         raise ValueError("summary empty")
     run_id = ensure_run_id(run_id, prefix="backtest")
+    data_dir = data_dir or DATA_DIR
     from quant_portfolio.core.storage import write_partitioned_dataset
 
     df = results.copy()
@@ -830,7 +833,7 @@ def write_backtest_outputs(
         trade_output["year"] = trade_output["date"].dt.year.astype("int32")
         write_partitioned_dataset(
             trade_output,
-            TRADES_DIR,
+            data_dir / "parquet/trades",
             ["year", "run_id"],
             existing_data_behavior=existing_data_behavior,
         )
@@ -841,11 +844,11 @@ def write_backtest_outputs(
         position_output["year"] = position_output["date"].dt.year.astype("int32")
         write_partitioned_dataset(
             position_output,
-            DATA_DIR / "parquet/positions",
+            data_dir / "parquet/positions",
             ["year", "run_id"],
             existing_data_behavior=existing_data_behavior,
         )
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(data_dir / "_meta.db")
     init_backtest_db(conn)
     dates = df["date"].sort_values()
     date_start = dates.iloc[0].strftime("%Y-%m-%d")
@@ -874,9 +877,24 @@ def run_backtest_pipeline(run_id: str | None = None, plot: bool = False):
     """
     from quant_portfolio.core.storage import load_weights_dataset
 
-    cfg = load_backtest_config()
-    prices = load_reference_price_dataset(BASE_CONFIG)
-    weights = load_weights_dataset(WEIGHTS_DIR, run_id)
+    base = load_base_config()
+    weights = load_weights_dataset(base.parquet_dir / "weights", run_id)
+    effective_run_id = str(weights.attrs.get("run_id") or ensure_run_id(run_id, prefix="backtest"))
+    snapshot_path = base.data_dir / "runs" / effective_run_id / "config.json"
+    snapshot = json.loads(snapshot_path.read_text()) if snapshot_path.exists() else None
+    if snapshot is None and (base.parquet_dir / "weights" / f"run_id={effective_run_id}").exists():
+        raise ValueError("Incomplete optimization run: configuration snapshot is missing")
+    cfg = BacktestConfig(**snapshot["backtest"]) if snapshot is not None else load_backtest_config()
+    prices = load_reference_price_dataset(base)
+    if snapshot is not None:
+        from quant_portfolio.core.storage import load_regimes_dataset
+        from quant_portfolio.pipeline.mc import regime_series
+        from quant_portfolio.pipeline.optimize import input_fingerprint
+
+        states = regime_series(load_regimes_dataset(base.parquet_dir / "regimes")) if snapshot["optimize"]["use_regimes"] else None
+        fingerprint = input_fingerprint(build_returns_matrix(prices), states, pd.Timestamp(snapshot["decision_end"]))
+        if fingerprint != snapshot["input_fingerprint"] or base.universe.fingerprint != snapshot["universe_fingerprint"]:
+            raise ValueError("Backtest inputs differ from the optimization run; create a new run")
     returns = build_returns_matrix(prices, return_type=cfg.return_type)
     results, trades, positions = simulate_portfolio(
         returns,
@@ -886,15 +904,15 @@ def run_backtest_pipeline(run_id: str | None = None, plot: bool = False):
     )
     baseline = compute_baseline_hold(prices, cfg)
     summary = summarize_performance(results, risk_free_rate=cfg.cash_rate_annual)
-    effective_run_id = str(weights.attrs.get("run_id") or ensure_run_id(run_id, prefix="backtest"))
     write_backtest_outputs(
         results,
         summary,
         partition_cols=["year", "run_id"],
-        base_dir=BACKTEST_DIR,
+        base_dir=base.parquet_dir / "backtests",
         run_id=effective_run_id,
         trades=trades,
         positions=positions,
+        data_dir=base.data_dir,
     )
     if plot:
         plot_backtest_vs_baseline(results, baseline)

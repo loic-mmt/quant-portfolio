@@ -40,6 +40,8 @@ def build_parser() -> argparse.ArgumentParser:
     ]:
         command_parser = subparsers.add_parser(command, help=help_text)
         _add_existing_data_argument(command_parser)
+        if command == "mc":
+            command_parser.add_argument("--run-id", required=True, help="Existing optimization run to re-evaluate.")
 
     optimize = subparsers.add_parser("optimize", help="Compute target portfolio weights.")
     optimize.add_argument("--run-id", default=None)
@@ -77,7 +79,7 @@ def _run_command(args: argparse.Namespace) -> None:
     elif args.command == "mc":
         from quant_portfolio.pipeline.mc import run_mc_pipeline
 
-        run_mc_pipeline(args.existing_data_behavior)
+        run_mc_pipeline(args.existing_data_behavior, run_id=args.run_id)
     elif args.command == "optimize":
         from quant_portfolio.pipeline.optimize import run_optimize_pipeline
 
@@ -99,7 +101,6 @@ def _run_command(args: argparse.Namespace) -> None:
 def _run_all(args: argparse.Namespace) -> None:
     from quant_portfolio.pipeline.backtest import run_backtest_pipeline
     from quant_portfolio.pipeline.features import run_features_pipeline
-    from quant_portfolio.pipeline.mc import run_mc_pipeline
     from quant_portfolio.pipeline.optimize import run_optimize_pipeline
     from quant_portfolio.pipeline.regimes import run_regime_pipeline
 
@@ -109,7 +110,6 @@ def _run_all(args: argparse.Namespace) -> None:
         run_ingest_pipeline()
     run_features_pipeline(args.existing_data_behavior)
     run_regime_pipeline(args.existing_data_behavior)
-    run_mc_pipeline(args.existing_data_behavior)
     run_id = ensure_run_id(args.run_id, prefix="portfolio")
     run_optimize_pipeline(run_id, args.existing_data_behavior)
     run_backtest_pipeline(run_id)
