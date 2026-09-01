@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, fields, replace
+from dataclasses import dataclass, fields
 import logging
 from pathlib import Path
 from typing import Literal
@@ -224,6 +224,10 @@ def ensure_positive_definite(cov: np.ndarray, eps: float = 1e-6) -> np.ndarray:
     if cov is None or cov.size == 0:
         raise ValueError("Covariance is empty.")
     cov = np.asarray(cov, dtype=float)
+    if cov.ndim != 2 or cov.shape[0] != cov.shape[1] or not np.isfinite(cov).all():
+        raise ValueError("Covariance must be a finite square matrix.")
+    if not np.isfinite(eps) or eps <= 0:
+        raise ValueError("eps must be finite and positive.")
     cov = (cov + cov.T) / 2.0
     eigvals, eigvecs = np.linalg.eigh(cov)  # Symmetric eigendecomposition: cov = V diag(λ) Vᵀ
     # V = eigvecs (matrice des vecteurs propres)
@@ -282,7 +286,39 @@ def compute_covariance(
     return ensure_positive_definite(cov, cfg.eps)
 
 
-_FALLBACK_WARNED = False
+@dataclass(frozen=True)
+class CovarianceEstimate:
+    covariance: np.ndarray
+    columns: tuple[str, ...]
+    estimator: str
+    observations: int
+
+
+def estimate_covariance(returns: pd.DataFrame, cfg: CovarianceConfig) -> CovarianceEstimate:
+    """Estimate all requested assets, never silently drop held positions.
+
+    Missing data use pairwise, diagonally shrunk covariance only when every
+    pair has sufficient overlap. The estimator name makes this fallback auditable.
+    """
+    if returns.empty or returns.columns.has_duplicates:
+        raise ValueError("Covariance requires non-empty, unique asset columns.")
+    if np.isinf(returns.to_numpy(dtype=float)).any():
+        raise ValueError("Returns contain infinite values.")
+    if (returns.count() < cfg.min_periods).any():
+        raise ValueError("Insufficient observations for requested covariance assets.")
+    estimator = cfg.method
+    if returns.isna().any().any():
+        cov = returns.cov(min_periods=cfg.min_periods).to_numpy()
+        if not np.isfinite(cov).all():
+            raise ValueError("Insufficient pairwise overlap for covariance.")
+        cov = shrink_to_diagonal(cov, cfg.shrinkage)
+        estimator = "shrink_diag_pairwise"
+        LOGGER.debug("Missing returns: using pairwise shrunk covariance")
+    else:
+        cov = compute_covariance(returns, cfg)
+    return CovarianceEstimate(
+        ensure_positive_definite(cov, cfg.eps), tuple(returns.columns), estimator, len(returns)
+    )
 
 
 def compute_covariance_with_columns(
@@ -291,19 +327,8 @@ def compute_covariance_with_columns(
 ) -> tuple[np.ndarray, list[str]]:
     """Compute covariance and return the list of columns used.
 
-    Falls back to sample covariance if Ledoit-Wolf fails due to NaNs.
+    Missing data use an explicitly identified, shrunk pairwise estimate.
     """
     cleaned = clean_returns(returns, cfg.min_periods)
-    global _FALLBACK_WARNED
-    try:
-        cov = compute_covariance(cleaned, cfg)
-    except ValueError as exc:
-        if cfg.method == "ledoit_wolf":
-            if not _FALLBACK_WARNED:
-                LOGGER.warning("Ledoit-Wolf failed due to NaNs; falling back to sample covariance")
-                _FALLBACK_WARNED = True
-            fallback_cfg = replace(cfg, method="sample")
-            cov = compute_covariance(cleaned, fallback_cfg)
-        else:
-            raise
-    return cov, list(cleaned.columns)
+    estimate = estimate_covariance(cleaned, cfg)
+    return estimate.covariance, list(estimate.columns)

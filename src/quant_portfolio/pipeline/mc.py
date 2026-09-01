@@ -1,107 +1,176 @@
+"""Causal Monte-Carlo risk of a weighted buy-and-hold portfolio."""
+
 from __future__ import annotations
 
-from pathlib import Path
-import pandas as pd
-import numpy as np
-import time
+import hashlib
+import json
 import logging
-from typing import Any
+from dataclasses import asdict, dataclass, fields
+from pathlib import Path
 
+import numpy as np
+import pandas as pd
 
-ROOT = Path(__file__).resolve().parents[3]
-FEATURES_ASSETS_DIR = ROOT / "data/parquet/features/assets"
-PRICES_DIR = ROOT / "data/parquet/prices"
-REGIMES_DIR = ROOT / "data/parquet/regimes"
-DB_PATH = ROOT / "data/_meta.db"
-DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-CONFIG_PATH = ROOT / "config/mc.yaml"
-MC_DIR = ROOT / "data/parquet/mc"
+from quant_portfolio.core.ids import validate_run_id
+from quant_portfolio.core.settings import PROJECT_ROOT, load_base_config, load_yaml_mapping
+from quant_portfolio.core.storage import (
+    load_regimes_dataset,
+    read_parquet_dataset,
+    replace_partitioned_dataset,
+)
+from quant_portfolio.models.covariance import CovarianceConfig, estimate_covariance
+
 LOGGER = logging.getLogger(__name__)
-
-try:
-    import yaml  # type: ignore
-except Exception:  # pragma: no cover
-    yaml = None
-
-from quant_portfolio.core.settings import load_base_config
-from quant_portfolio.core.storage import load_regimes_dataset, write_mc_dataset
-from quant_portfolio.pipeline.data_quality import load_reference_price_dataset
+CONFIG_PATH = PROJECT_ROOT / "config/mc.yaml"
 
 
-BASE_CONFIG = load_base_config()
+@dataclass(frozen=True)
+class MCConfig:
+    n_sims: int = 2000
+    horizons: tuple[int, ...] = (5, 20)
+    window: int = 252
+    min_observations: int = 20
+    random_seed: int = 42
+    dist: str = "gaussian"
+    compare_distributions: tuple[str, ...] = ("student_t",)
+    student_df: float = 8.0
+    loss_threshold: float = 0.05
+    drawdown_threshold: float = 0.10
+    sparse_regime_policy: str = "pooled"
+
+    def __post_init__(self) -> None:
+        for name in ("n_sims", "window", "min_observations", "random_seed"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ValueError(f"{name} must be an integer")
+        if self.n_sims < 100 or self.min_observations < 2 or self.window < self.min_observations:
+            raise ValueError("MC requires >=100 simulations and window >= min_observations >= 2")
+        if self.random_seed < 0 or not np.isfinite(self.student_df) or self.student_df <= 2:
+            raise ValueError("MC seed must be >= 0 and student_df > 2")
+        if not self.horizons or any(type(h) is not int or h <= 0 for h in self.horizons):
+            raise ValueError("MC horizons must contain positive integers")
+        if len(set(self.horizons)) != len(self.horizons):
+            raise ValueError("MC horizons must be unique")
+        if set((self.dist, *self.compare_distributions)) - {"gaussian", "student_t"}:
+            raise ValueError("MC distribution must be gaussian or student_t")
+        if not 0 < self.loss_threshold < 1 or not 0 < self.drawdown_threshold < 1:
+            raise ValueError("MC loss/drawdown thresholds must be in (0, 1)")
+        if self.sparse_regime_policy not in {"pooled", "error"}:
+            raise ValueError("sparse_regime_policy must be pooled or error")
 
 
+def load_mc_config(path: Path | None = None) -> MCConfig:
+    data = load_yaml_mapping(path or CONFIG_PATH)
+    unknown = set(data) - {field.name for field in fields(MCConfig)}
+    if unknown:
+        raise ValueError(f"Unknown MC fields: {sorted(unknown)}")
+    data.setdefault("random_seed", load_base_config().random_seed)
+    for name in ("horizons", "compare_distributions"):
+        if name in data:
+            data[name] = tuple(data[name])
+    return MCConfig(**data)
 
 
-def load_mc_config() -> dict[str, Any]:
-    """Load Monte Carlo configuration from YAML."""
-    if not CONFIG_PATH.exists():
-        return {}
-    content = CONFIG_PATH.read_text().strip()
-    if not content:
-        return {}
-    if yaml is None:
-        raise ImportError("PyYAML is required to parse config/regimes.yaml.")
-    data = yaml.safe_load(content)
-    return data if isinstance(data, dict) else {}
+class InsufficientHistory(ValueError):
+    """No defensible historical calibration is available yet."""
 
 
-
-def select_universe(df_assets: pd.DataFrame, tickers: list[str] | None = None) -> pd.DataFrame:
-    """Optionally filter asset features to a ticker universe."""
-    if df_assets is None or df_assets.empty:
-        return pd.DataFrame(index=df_assets.index if df_assets is not None else None)
-    if tickers:
-        return df_assets[df_assets["ticker"].isin(tickers)].copy()
-    return df_assets.copy()
-
-
-def build_returns_matrix(df_prices: pd.DataFrame) -> pd.DataFrame:
-    """Pivot prices into a returns matrix indexed by date."""
-    if df_prices is None or df_prices.empty:
-        return pd.DataFrame()
-    if "adj_close" not in df_prices.columns:
-        raise KeyError("adj_close column is required to build returns matrix.")
-    data = df_prices.copy()
-    data["date"] = pd.to_datetime(data["date"], errors="coerce")
-    data = data.dropna(subset=["date"])
-    prices = data.pivot_table(index="date", columns="ticker", values="adj_close", aggfunc="last")
-    returns = np.log(prices / prices.shift(1))
-    return returns
+def regime_series(regimes: pd.DataFrame | pd.Series) -> pd.Series:
+    if isinstance(regimes, pd.Series):
+        states = regimes.copy()
+    else:
+        data = regimes.set_index("date") if "date" in regimes.columns else regimes
+        states = data["state"].copy()
+    states.index = pd.DatetimeIndex(states.index)
+    if states.index.has_duplicates or not states.dropna().isin([0, 1, 2]).all():
+        raise ValueError("Regimes require unique dates and semantic states 0/1/2")
+    return states.dropna().sort_index()
 
 
-def calibrate_regime_params(
+def state_at_date(regimes: pd.Series, date: pd.Timestamp) -> int:
+    available = regimes.loc[regimes.index <= date]
+    if available.empty:
+        raise InsufficientHistory("No causal regime available")
+    return int(available.iloc[-1])
+
+
+@dataclass(frozen=True)
+class MCCalibration:
+    columns: tuple[str, ...]
+    mu: np.ndarray
+    covariance: np.ndarray
+    state: int | None
+    calibration_start: pd.Timestamp
+    calibration_end: pd.Timestamp
+    observations: int
+    calibration_status: str
+    covariance_estimator: str
+
+
+def calibrate_mc(
     returns: pd.DataFrame,
-    regimes: pd.DataFrame,
-    window: int,
-) -> dict[int, dict[str, np.ndarray]]:
-    """Estimate per-regime mean and covariance from recent returns."""
-    if returns is None or returns.empty:
-        raise ValueError("returns is empty.")
-    if regimes is None or regimes.empty:
-        raise ValueError("regimes is empty.")
-    if "state" not in regimes.columns:
-        raise KeyError("regimes must include a 'state' column.")
+    date: pd.Timestamp,
+    columns: list[str],
+    cfg: MCConfig,
+    covariance_cfg: CovarianceConfig,
+    regimes: pd.Series | None = None,
+) -> MCCalibration:
+    """Fit log-return parameters on dates strictly before the decision.
 
-    if "date" in regimes.columns:
-        regimes = regimes.set_index("date")
-    if "date" in returns.columns:
-        returns = returns.set_index("date")
+    Inputs are simple returns. Sparse-regime fallback is recorded in every
+    summary, never silently pooled. Weighted assets are never dropped.
+    """
+    if covariance_cfg.method == "sample":
+        raise ValueError("MC requires a shrunk covariance estimator")
+    if covariance_cfg.min_periods > cfg.window:
+        raise ValueError("MC window is shorter than covariance min_periods")
+    hist = returns.loc[returns.index < date, columns].sort_index()
+    if np.isinf(hist.to_numpy()).any() or (hist <= -1).any().any():
+        raise ValueError("MC log-return calibration requires returns > -1 and no infinities")
+    hist = np.log1p(hist).dropna(how="all")
+    state = state_at_date(regimes, date) if regimes is not None else None
+    selected = hist
+    if regimes is not None:
+        labels = regimes.reindex(hist.index, method="ffill")
+        selected = hist.loc[labels == state]
+    status = "conditional" if regimes is not None else "unconditional"
+    minimum = max(cfg.min_observations, covariance_cfg.min_periods)
 
-    aligned_returns = returns.loc[returns.index.intersection(regimes.index)]
-    aligned_states = regimes.loc[aligned_returns.index, "state"]
+    def fit(frame: pd.DataFrame):
+        frame = frame.tail(cfg.window)
+        if len(frame) < minimum or (frame.count() < minimum).any():
+            raise InsufficientHistory("Insufficient MC observations for every weighted asset")
+        try:
+            estimate = estimate_covariance(frame, covariance_cfg)
+        except ValueError as exc:
+            raise InsufficientHistory(str(exc)) from exc
+        return frame, estimate
 
-    params: dict[int, dict[str, np.ndarray]] = {}  # Initialise le dictionnaire qui stockera, pour chaque régime (state), les paramètres estimés (mu, sigma).
-    for state in sorted(aligned_states.dropna().unique()):  # Parcourt chaque régime unique non-nul, trié, présent dans les états alignés.
-        state_dates = aligned_states[aligned_states == state].index  # Récupère les dates correspondant uniquement au régime courant.
-        window_returns = aligned_returns.loc[state_dates].tail(window)  # Extrait les rendements de ce régime et ne garde que les `window` dernières observations.
-        if window_returns.empty:  # Vérifie qu'il existe bien des données pour ce régime sur la fenêtre sélectionnée.
-            continue  # Saute ce régime si aucune observation n'est disponible.
-        mu = window_returns.mean().to_numpy()  # Calcule la moyenne (vecteur des espérances) des rendements sur la fenêtre.
-        sigma = window_returns.cov().to_numpy()  # Calcule la matrice de covariance des rendements sur la fenêtre.
-        params[int(state)] = {"mu": mu, "sigma": sigma}  # Enregistre les paramètres (mu, sigma) pour ce régime dans le dictionnaire, avec une clé entière.
+    try:
+        sample, estimate = fit(selected)
+    except InsufficientHistory:
+        if regimes is None or cfg.sparse_regime_policy != "pooled":
+            raise
+        sample, estimate = fit(hist)
+        status = "pooled_sparse_regime"
+        LOGGER.info("MC %s state=%s: explicit pooled-history fallback", date.date(), state)
+    return MCCalibration(
+        tuple(columns),
+        sample.mean().to_numpy(),
+        estimate.covariance,
+        state,
+        sample.index.min(),
+        sample.index.max(),
+        len(sample),
+        status,
+        estimate.estimator,
+    )
 
-    return params
+
+def date_seed(seed: int, date: pd.Timestamp, distribution: str) -> int:
+    """Stable across process order, appended data, and Python hash randomization."""
+    payload = f"{seed}|{pd.Timestamp(date).isoformat()}|{distribution}".encode()
+    return int.from_bytes(hashlib.sha256(payload).digest()[:8], "little")
 
 
 def simulate_paths(
@@ -110,136 +179,179 @@ def simulate_paths(
     n_sims: int,
     horizon: int,
     dist: str = "gaussian",
+    *,
+    seed: int = 42,
+    student_df: float = 8.0,
 ) -> np.ndarray:
-    """Simulate multivariate return paths from Gaussian parameters."""
-    if n_sims <= 0 or horizon <= 0:
-        raise ValueError("n_sims and horizon must be positive.")
-    if dist != "gaussian":
-        raise ValueError("Only gaussian dist is supported for now.")
+    """Correlated daily log returns, shape (simulation, day, asset).
 
-    mu = np.asarray(mu)
-    sigma = np.asarray(sigma)
-    n_assets = mu.shape[0]
-    paths = np.zeros((n_sims, horizon, n_assets), dtype="float64")
-    for t in range(horizon):
-        paths[:, t, :] = np.random.multivariate_normal(mu, sigma, size=n_sims)
-    return paths
-
-
-def summarize_paths(paths: np.ndarray, alpha: float = 0.05) -> dict[str, float]:
-    """Compute VaR, CVaR, and q95 summary stats from simulated paths."""
-    if paths is None or len(paths) == 0:
-        raise ValueError("paths is empty.")
-    arr = np.asarray(paths)  # Convertit `paths` en tableau numpy (au cas où ce n’était pas déjà un ndarray).
-    if arr.ndim == 1:  # Si le tableau est 1D, on considère qu’il contient déjà directement des PnL par scénario.
-        pnl = arr  # Assigne directement le tableau comme distribution de PnL.
-    else:  # Sinon, `arr` est multi-dimensionnel (ex: scénarios × temps × actifs, etc.).
-        pnl = np.nansum(arr, axis=tuple(range(1, arr.ndim)))  # Agrège chaque scénario en sommant sur toutes les dimensions sauf la première, en ignorant les NaN.
-    pnl = np.asarray(pnl, dtype="float64")
-    var = np.nanquantile(pnl, alpha)  # Calcule la Value-at-Risk au niveau `alpha` (quantile bas), en ignorant les NaN.
-    cvar = np.nanmean(pnl[pnl <= var]) if np.any(pnl <= var) else np.nan  # Calcule la CVaR comme la moyenne des pertes <= VaR, sinon renvoie NaN si aucun point n’est dans la queue.
-    q95 = np.nanquantile(pnl, 0.95)  # Calcule le quantile 95% de la distribution de PnL (mesure de “bon scénario” / upside).
-    return {"var": float(var), "cvar": float(cvar), "q95": float(q95)}
+    Student innovations have the same covariance as Gaussian innovations.
+    A shared chi-square scale per scenario/day preserves tail dependence.
+    """
+    rng = np.random.default_rng(seed)
+    mu = np.asarray(mu, dtype=float)
+    innovations = rng.standard_normal((horizon, n_sims, len(mu))) @ np.linalg.cholesky(sigma).T
+    if dist == "student_t":
+        if student_df <= 2:
+            raise ValueError("student_df must exceed 2")
+        innovations *= np.sqrt((student_df - 2) / rng.chisquare(student_df, (horizon, n_sims, 1)))
+    elif dist != "gaussian":
+        raise ValueError("Unknown MC distribution")
+    return (innovations + mu).transpose(1, 0, 2)
 
 
-def build_mc_outputs(
-    returns: pd.DataFrame,
-    regimes: pd.DataFrame,
-    params: dict[int, dict[str, np.ndarray]],
-    n_sims: int,
-    horizons: list[int],
-    dist: str,
-) -> pd.DataFrame:
-    """Build Monte Carlo summaries for each regime/date/horizon."""
-    if returns is None or returns.empty:
-        return pd.DataFrame()
-    if regimes is None or regimes.empty:
-        return pd.DataFrame()
-    if "state" not in regimes.columns:
-        raise KeyError("regimes must include a 'state' column.")
+def simulate_calibration(model: MCCalibration, date: pd.Timestamp, cfg: MCConfig) -> dict[str, np.ndarray]:
+    return {
+        dist: simulate_paths(
+            model.mu,
+            model.covariance,
+            cfg.n_sims,
+            max(cfg.horizons),
+            dist,
+            seed=date_seed(cfg.random_seed, date, dist),
+            student_df=cfg.student_df,
+        )
+        for dist in dict.fromkeys((cfg.dist, *cfg.compare_distributions))
+    }
 
-    regimes = regimes.copy()
-    if "date" in regimes.columns:
-        regimes["date"] = pd.to_datetime(regimes["date"], errors="coerce")
-        regimes = regimes.dropna(subset=["date"])
-        regimes = regimes.set_index("date")
 
-    rows: list[dict[str, Any]] = []
-    for date, row in regimes.iterrows():
-        state = row["state"]
-        if state not in params:
-            continue
-        mu = params[state]["mu"]
-        sigma = params[state]["sigma"]
-        for horizon in horizons:
-            paths = simulate_paths(mu, sigma, n_sims, horizon, dist=dist)
-            summary = summarize_paths(paths)
+def summarize_paths(
+    paths: np.ndarray,
+    weights: np.ndarray,
+    *,
+    cash_return: float = 0.0,
+    loss_threshold: float = 0.05,
+    drawdown_threshold: float = 0.10,
+) -> dict[str, float]:
+    """Risk as fraction of initial NAV; assets drift buy-and-hold through paths.
+
+    VaR/CVaR are nonnegative losses, PnL quantiles signed; initial NAV is a peak.
+    """
+    weights = np.asarray(weights, dtype=float)
+    if paths.ndim != 3 or paths.shape[2] != len(weights):
+        raise ValueError("MC paths and portfolio weights must align")
+    if not np.isfinite(weights).all() or (weights < 0).any() or weights.sum() > 1 + 1e-10:
+        raise ValueError("MC weights must be finite, long-only, with exposure <= 1")
+    with np.errstate(over="raise", invalid="raise"):
+        levels = np.exp(paths.cumsum(axis=1)) @ weights
+    days = np.arange(1, paths.shape[1] + 1)
+    levels += max(0.0, 1 - weights.sum()) * (1 + cash_return) ** days
+    if not np.isfinite(levels).all():
+        raise ValueError("MC portfolio paths are non-finite")
+    pnl = levels[:, -1] - 1.0
+    peaks = np.maximum.accumulate(np.column_stack([np.ones(len(levels)), levels]), axis=1)[:, 1:]
+    drawdown = (1 - levels / peaks).max(axis=1)
+    result = {f"pnl_q{int(q * 100):02d}": float(np.quantile(pnl, q)) for q in (0.01, 0.05, 0.5, 0.95, 0.99)}
+    for alpha, suffix in ((0.01, "01"), (0.05, "05")):
+        quantile = np.quantile(pnl, alpha)
+        result[f"var_{suffix}"] = max(0.0, float(-quantile))
+        result[f"cvar_{suffix}"] = max(0.0, float(-pnl[pnl <= quantile].mean()))
+    result.update(
+        expected_pnl=float(pnl.mean()),
+        probability_loss=float((pnl < -loss_threshold).mean()),
+        probability_drawdown=float((drawdown > drawdown_threshold).mean()),
+        loss_threshold=loss_threshold,
+        drawdown_threshold=drawdown_threshold,
+    )
+    return result
+
+
+def summarize_portfolio(
+    model: MCCalibration,
+    paths: dict[str, np.ndarray],
+    weights: pd.Series,
+    date: pd.Timestamp,
+    role: str,
+    cfg: MCConfig,
+    cash_return: float = 0.0,
+) -> list[dict]:
+    if weights.drop(labels=list(model.columns), errors="ignore").abs().sum() > 1e-12:
+        raise ValueError("MC calibration is missing a weighted asset")
+    aligned = weights.reindex(model.columns, fill_value=0.0).to_numpy()
+    weight_json = json.dumps({str(k): float(v) for k, v in weights.items()}, sort_keys=True)
+    rows = []
+    for dist, simulations in paths.items():
+        for horizon in cfg.horizons:
             rows.append(
                 {
                     "date": date,
-                    "state": int(state),
-                    "horizon": int(horizon),
-                    **summary,
+                    "portfolio_role": role,
+                    "state": model.state,
+                    "horizon": horizon,
+                    "distribution": dist,
+                    "random_seed": cfg.random_seed,
+                    "n_sims": cfg.n_sims,
+                    "student_df": cfg.student_df,
+                    "exposure": float(weights.sum()),
+                    "weights_json": weight_json,
+                    "cash_return": cash_return,
+                    "calibration_start": model.calibration_start,
+                    "calibration_end": model.calibration_end,
+                    "observations": model.observations,
+                    "calibration_status": model.calibration_status,
+                    "covariance_estimator": model.covariance_estimator,
+                    **summarize_paths(
+                        simulations[:, :horizon],
+                        aligned,
+                        cash_return=cash_return,
+                        loss_threshold=cfg.loss_threshold,
+                        drawdown_threshold=cfg.drawdown_threshold,
+                    ),
                 }
             )
-    return pd.DataFrame(rows)
+    return rows
 
 
-def run_mc_pipeline(existing_data_behavior: str = "overwrite_or_ignore") -> None:
-    """Run the Monte Carlo pipeline end-to-end."""
-    LOGGER.info("Loading Monte-Carlo configuration")
+def run_mc_pipeline(existing_data_behavior: str = "overwrite_or_ignore", run_id: str | None = None) -> str:
+    """Re-evaluate saved decision-time weights; never feed a replay to optimization."""
+    if run_id is None:
+        raise ValueError("mc requires --run-id from an existing optimize run")
+    run_id = validate_run_id(run_id)
+    base = load_base_config()
+    from quant_portfolio.pipeline.backtest import build_returns_matrix
+    from quant_portfolio.pipeline.data_quality import load_reference_price_dataset
+    from quant_portfolio.pipeline.optimize import input_fingerprint
+
+    snapshot = json.loads((base.data_dir / "runs" / run_id / "config.json").read_text())
     cfg = load_mc_config()
-    n_sims = int(cfg.get("n_sims", 2000))
-    horizons = [int(h) for h in cfg.get("horizons", [5, 20])]
-    window = int(cfg.get("window", 252))
-    dist = str(cfg.get("dist", "gaussian"))
-    tickers = cfg.get("tickers")
-
-    LOGGER.info("Loading regimes")
-    regimes = load_regimes_dataset(REGIMES_DIR, columns=["date", "state"])
-    if regimes.empty:
-        raise ValueError("No regimes data available.")
-
-    LOGGER.info("Loading prices")
-    df_prices = load_reference_price_dataset(BASE_CONFIG)
-    df_prices = select_universe(df_prices, tickers)
-
-    LOGGER.info("Building returns matrix")
-    returns = build_returns_matrix(df_prices)
-    if returns.empty:
-        raise ValueError("No returns matrix available.")
-
-    LOGGER.info("Calibrating regime parameters")
-    params = calibrate_regime_params(returns, regimes, window=window)
-    LOGGER.info("Building Monte-Carlo outputs")
-    outputs = build_mc_outputs(returns, regimes, params, n_sims, horizons, dist)
-
-    if outputs.empty:
-        return
-
-    LOGGER.info("Writing Monte-Carlo dataset")
-    suffix = str(int(time.time()))
-    basename_template = f"mc_{suffix}_{{i}}.parquet"
-    write_mc_dataset(
-        outputs,
-        MC_DIR,
-        partition_cols=["year"],
-        existing_data_behavior=existing_data_behavior,
-        basename_template=basename_template,
+    covariance_cfg = CovarianceConfig(**snapshot["covariance"])
+    returns = build_returns_matrix(load_reference_price_dataset(base))
+    inputs = read_parquet_dataset(base.parquet_dir / "risk_weights" / f"run_id={run_id}")
+    regimes = None
+    if snapshot["optimize"]["use_regimes"]:
+        regimes = regime_series(load_regimes_dataset(base.parquet_dir / "regimes"))
+    if (
+        snapshot["universe_fingerprint"] != base.universe.fingerprint
+        or input_fingerprint(returns, regimes, pd.Timestamp(snapshot["decision_end"]))
+        != snapshot["input_fingerprint"]
+    ):
+        raise ValueError("MC replay inputs differ from the optimization run; create a new run")
+    cash_return = (1 + snapshot["backtest"]["cash_rate_annual"]) ** (1 / 252) - 1
+    rows = []
+    for date, group in inputs.groupby("date", sort=True):
+        columns = [
+            ticker for ticker in returns.columns if group.loc[group.ticker == ticker, "in_calibration"].any()
+        ]
+        if not columns:
+            continue
+        model = calibrate_mc(returns, pd.Timestamp(date), columns, cfg, covariance_cfg, regimes)
+        paths = simulate_calibration(model, pd.Timestamp(date), cfg)
+        for role, portfolio in group.groupby("portfolio_role"):
+            weights = portfolio.set_index("ticker")["weight"]
+            rows.extend(summarize_portfolio(model, paths, weights, date, role, cfg, cash_return))
+    if not rows:
+        raise ValueError("No calibrated risk weights to replay")
+    destination = base.parquet_dir / "mc_replay" / f"run_id={run_id}"
+    if existing_data_behavior == "error" and destination.exists():
+        raise FileExistsError(destination)
+    replace_partitioned_dataset(pd.DataFrame(rows), destination, ["year"])
+    (base.data_dir / "runs" / run_id / "mc_replay.json").write_text(
+        json.dumps(
+            {"mc": asdict(cfg), "source_input_fingerprint": snapshot["input_fingerprint"]},
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
     )
-    LOGGER.info("Monte-Carlo pipeline complete")
-
-
-if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Compute and write mc datasets.")
-    parser.add_argument(
-        "--existing-data-behavior",
-        default="overwrite_or_ignore",
-        choices=["overwrite_or_ignore", "overwrite", "error", "delete_matching"],
-        help="Behavior when target dataset already has data.",
-    )
-    args = parser.parse_args()
-
-    run_mc_pipeline(existing_data_behavior=args.existing_data_behavior)
+    LOGGER.info("MC replay %s: %s", run_id, asdict(cfg))
+    return run_id

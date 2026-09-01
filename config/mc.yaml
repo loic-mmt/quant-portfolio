@@ -1,8 +1,14 @@
-n_sims: 500
+n_sims: 2000
 horizons:
   - 5
   - 20
 window: 252
+min_observations: 20
+random_seed: 42
 dist: gaussian
-tickers:
-  - SMCI
+compare_distributions: [student_t]
+student_df: 8.0
+loss_threshold: 0.05
+drawdown_threshold: 0.10
+# Explicit, logged fallback. Set error to forbid pooling across regimes.
+sparse_regime_policy: pooled
