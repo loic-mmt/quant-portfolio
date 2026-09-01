@@ -26,7 +26,7 @@ La priorité est la validité du protocole de recherche. L'optimisation des perf
 | Optimisation | ✅ Contrainte | Minimum-variance CVXPY, coûts, turnover, secteurs et statuts vérifiés |
 | Risk overlay quotidien | ✅ Implémenté | Ciblage de volatilité, stress cut, cash, hysteresis et gouverneurs décision/exécution |
 | Backtest | ✅ Fiable | Exécution décalée, cash, coûts, turnover et dérive des poids testés |
-| Ablations et reporting | ⬜ À faire | Rapport, attribution par régime et comparaison des variantes absents |
+| Ablations et reporting | ✅ Autonome | Six variantes comparables, métriques recalculables, attribution et HTML inline SVG |
 | C++ | 🚧 Prototype | MC compilable, binding Python non importable et optimisation C++ absente |
 | Tests et CI | 🚧 Partiel | Tests unitaires déterministes présents ; workflow CI reste à faire |
 
@@ -214,39 +214,43 @@ sous gouverneurs durs. La comparaison empirique des stratégies reste au jalon 5
 
 ### Baselines et ablations
 
-- [ ] Equal-weight buy-and-hold.
-- [ ] Equal-weight rebalancé.
-- [ ] Minimum variance sans régimes.
-- [ ] Stratégie sans overlay.
-- [ ] Stratégie sans Monte-Carlo.
-- [ ] Stratégie complète.
-- [ ] Utiliser exactement les mêmes dates, univers et coûts pour toutes les variantes.
+- [x] Equal-weight buy-and-hold.
+- [x] Equal-weight rebalancé.
+- [x] Minimum variance sans régimes.
+- [x] Stratégie sans overlay.
+- [x] Stratégie sans Monte-Carlo.
+- [x] Stratégie complète.
+- [x] Utiliser exactement les mêmes dates, univers et coûts pour toutes les variantes.
 
 ### Métriques
 
-- [ ] CAGR, volatilité, Sharpe et Sortino.
-- [ ] Max drawdown et temps de récupération.
-- [ ] VaR/CVaR réalisées, downside deviation et fréquence des événements extrêmes.
-- [ ] Turnover, coûts cumulés et capacité approximative.
-- [ ] Concentration HHI, poids maximum et exposition cash.
-- [ ] Attribution de performance et de risque par régime.
-- [ ] Comparaison aux baselines avec tableaux et graphiques communs.
+- [x] CAGR, volatilité, Sharpe et Sortino.
+- [x] Max drawdown et temps de récupération.
+- [x] VaR/CVaR réalisées, downside deviation et fréquence des événements extrêmes.
+- [x] Turnover, coûts cumulés et capacité approximative.
+- [x] Concentration HHI, poids maximum et exposition cash.
+- [x] Attribution de performance et de risque par régime.
+- [x] Comparaison aux baselines avec tableaux et graphiques communs.
 
 ### Reporting
 
-- [ ] Implémenter `pipeline/report.py`.
-- [ ] Générer une equity curve, les drawdowns et l'exposition.
-- [ ] Visualiser les régimes et leurs probabilités.
-- [ ] Produire les performances, risques et turnovers par régime.
-- [ ] Générer un tableau d'ablations.
-- [ ] Exporter un rapport HTML ou PDF autonome.
-- [ ] Enregistrer pour chaque run la configuration, le seed, la version Git et les dates de données.
+- [x] Implémenter `pipeline/report.py`.
+- [x] Générer une equity curve, les drawdowns et l'exposition.
+- [x] Visualiser les régimes et leurs probabilités.
+- [x] Produire les performances, risques et turnovers par régime.
+- [x] Générer un tableau d'ablations.
+- [x] Exporter un rapport HTML ou PDF autonome.
+- [x] Enregistrer pour chaque run la configuration, le seed, la version Git et les dates de données.
 
 ### Critères d'acceptation
 
-- [ ] Le rapport complet est généré par une seule commande.
-- [ ] Toutes les métriques sont recalculables depuis les artefacts du run.
-- [ ] Les conclusions séparent clairement performance in-sample et out-of-sample.
+- [x] Le rapport complet est généré par une seule commande.
+- [x] Toutes les métriques sont recalculables depuis les artefacts du run.
+- [x] Les conclusions séparent clairement performance in-sample et out-of-sample.
+
+Contrat, formules et limites : [Évaluation et rapport](docs/evaluation-and-reporting.md).
+Période calibration/warmup ne publie aucun score de performance ; comparaisons et
+conclusions utilisent uniquement première exécution → fin figée du run.
 
 ---
 

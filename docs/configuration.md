@@ -102,3 +102,19 @@ Les nouveaux runs d'optimisation sont immuables. Un nouveau calcul nécessite un
 nouvel ID, même avec `--existing-data-behavior overwrite`. Leur configuration
 d'exécution sauvegardée est réutilisée par le backtest. La commande MC exige un ID
 existant et écrit un replay séparé ; elle ne modifie pas les risques du run initial.
+
+## Configuration du rapport
+
+`config/report.yaml` contient :
+
+| Champ | Défaut | Rôle |
+|---|---:|---|
+| `trading_days` | `252` | Annualisation vol/ratios |
+| `extreme_loss_threshold` | `0.02` | Seuil de fréquence des pertes journalières extrêmes |
+| `capacity_adv_window` | `20` | Fenêtre ADV en séances |
+| `capacity_participation_rate` | `0.10` | Fraction maximale théorique d'ADV |
+| `capacity_quantile` | `0.05` | Quantile prudent des limites par trade |
+
+Rapport utilise config/seed sauvegardés par optimisation, pas fichiers live MC/
+optimiseur. Rapport peut être régénéré avec nouveau `report.yaml`; manifeste garde
+valeurs exactes. Voir [Évaluation et rapport](evaluation-and-reporting.md).

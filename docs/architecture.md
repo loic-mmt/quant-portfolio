@@ -86,6 +86,13 @@ et de la cible sont distincts. La commande `mc --run-id ...` rejoue les poids
 sauvegardés ; ses résultats ne sont jamais réinjectés dans les décisions passées.
 Voir [Risque et allocation](risk-allocation.md).
 
+### `pipeline/evaluation.py` et `pipeline/report.py`
+
+Évaluation reconstruit cinq baselines/ablations autour de stratégie complète
+sauvegardée, impose mêmes dates/univers/coûts, calcule métriques et attribution.
+Report persiste séries/positions/trades/métriques puis génère HTML autonome avec
+SVG inline. Voir [Évaluation et rapport](evaluation-and-reporting.md).
+
 ## Artefacts d'un backtest
 
 | Dataset | Contenu |
@@ -99,5 +106,11 @@ Voir [Risque et allocation](risk-allocation.md).
 | `positions` | Poids et valeur de chaque actif après clôture, cash inclus |
 | `backtests` | Valeur, rendement net, coût, turnover et exposition quotidienne |
 | SQLite `backtests` | Résumé de performance par `run_id` |
+| `evaluations` | Séries quotidiennes comparables des six variantes |
+| `evaluation_positions` | Positions quotidiennes des six variantes |
+| `evaluation_trades` | Trades et capacité ADV approximative |
+| `evaluation_metrics` | Métriques out-of-sample recalculables |
+| `regime_attribution` | Performance/risque/turnover par régime confirmé |
+| `runs/<id>/report.json` | Manifeste, variantes, périodes et provenance du rapport |
 
 Les fichiers historiques déjà présents restent lisibles. Les nouveaux backtests ajoutent des colonnes sans supprimer les anciennes.

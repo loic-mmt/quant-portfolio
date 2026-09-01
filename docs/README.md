@@ -10,6 +10,7 @@ Cette documentation décrit le fonctionnement exécutable du projet. Le `README.
 - [Données et features](data-and-features.md) — univers versionné, FX, contrôles qualité et catalogue des features.
 - [Régimes walk-forward](regimes.md) — filtrage causal, mapping économique, confirmation 20/60 et artefacts.
 - [Risque et allocation](risk-allocation.md) — MC pondéré, solveur contraint, overlay quotidien, fallbacks et replay.
+- [Évaluation et rapport](evaluation-and-reporting.md) — baselines, ablations, métriques, attribution, provenance et HTML autonome.
 - [Contrat temporel du backtest](temporal-contract.md) — information, décision, exécution, cash et coûts.
 
 ## Règle de lecture

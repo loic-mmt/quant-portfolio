@@ -332,18 +332,25 @@ Pipeline complet :
 
 ```bash
 quant-portfolio run-all --run-id experiment-001
+quant-portfolio run-all --run-id experiment-002 --with-report
 ```
 
 La documentation détaillée est disponible dans [`docs/`](docs/README.md), notamment le
 [contrat temporel du backtest](docs/temporal-contract.md) et le contrat
 [données/features](docs/data-and-features.md) et le guide
 [risque, allocation contrainte et overlay quotidien](docs/risk-allocation.md).
+Baselines, métriques et HTML autonome :
+[évaluation et reporting](docs/evaluation-and-reporting.md).
 
-Le jalon 4 est implémenté : MC causal pondéré (gaussienne/Student-t), solveur
+Les jalons 4–5 sont implémentés : MC causal pondéré (gaussienne/Student-t), solveur
 minimum-variance contraint et overlay quotidien avec cash. Chaque optimisation
 utilise un nouvel ID et conserve ses décisions, risques et configurations. Les
 anciens artefacts MC doivent être recalculés ; les hypothèses et limites du modèle
 restent détaillées dans `docs/`.
+
+`report` construit equal-weight hold/rebalanced, minimum variance sans régimes,
+sans overlay, sans MC et stratégie complète sur période/univers/coûts communs.
+Sortie HTML autonome + Parquet recalculables + attribution par régime.
 
 ---
 

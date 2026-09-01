@@ -56,14 +56,23 @@ Le pipeline complet peut être lancé avec :
 
 ```bash
 quant-portfolio run-all --run-id experiment-001
+quant-portfolio run-all --run-id experiment-002 --with-report
 ```
 
 Options utiles :
 
 - `--skip-ingest` sur `run-all` réutilise les prix locaux ;
+- `--with-report` génère ablations, artefacts d'évaluation et HTML autonome après backtest ;
 - `--existing-data-behavior overwrite` force la réécriture d'un dataset ;
 - `--verbose` active les diagnostics détaillés ;
-- `--with-report` ajoute le résumé Markdown à la fin de `run-all`.
+
+Rapport seul sur run optimisé/backtesté :
+
+```bash
+quant-portfolio report --run-id experiment-001
+```
+
+Voir [Évaluation et rapport](evaluation-and-reporting.md).
 
 ## Exécution sans installation du script console
 
