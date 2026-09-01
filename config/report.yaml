@@ -1,0 +1,5 @@
+trading_days: 252
+extreme_loss_threshold: 0.02
+capacity_adv_window: 20
+capacity_participation_rate: 0.10
+capacity_quantile: 0.05
