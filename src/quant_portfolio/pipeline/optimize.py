@@ -13,6 +13,7 @@ import pandas as pd
 
 from quant_portfolio.core.ids import ensure_run_id
 from quant_portfolio.core.portfolio import drift_weights, execution_weights
+from quant_portfolio.core.provenance import collect_provenance
 from quant_portfolio.core.settings import PROJECT_ROOT, load_base_config, load_yaml_mapping
 from quant_portfolio.core.storage import load_regimes_dataset, replace_partitioned_dataset
 from quant_portfolio.models.allocation import solve_allocation
@@ -536,6 +537,7 @@ def run_optimize_pipeline(
         returns.index.max(),
     ).isoformat()
     snapshot = dict(
+        schema_version=2,
         optimize=asdict(cfg),
         mc=asdict(mc_cfg),
         covariance=asdict(covariance_cfg),
@@ -545,6 +547,10 @@ def run_optimize_pipeline(
         reference_currency=base.reference_currency,
         decision_end=end.isoformat(),
         input_fingerprint=input_fingerprint(returns, regimes, end),
+        input_start=returns.index.min().isoformat(),
+        input_end=returns.index.max().isoformat(),
+        decision_start=result.weights.date.min().isoformat(),
+        strategy_provenance=collect_provenance(),
     )
     run_dir.mkdir(parents=True)
     (run_dir / "config.json").write_text(json.dumps(snapshot, indent=2, sort_keys=True) + "\n")

@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from dataclasses import replace
@@ -19,9 +20,11 @@ from quant_portfolio.core.universe import AssetDefinition
 from quant_portfolio.main import _run_all, build_parser
 from quant_portfolio.models.covariance import CovarianceConfig
 from quant_portfolio.pipeline.backtest import DEFAULT_CFG as BACKTEST_DEFAULT
-from quant_portfolio.pipeline.backtest import run_backtest_pipeline
+from quant_portfolio.pipeline.backtest import BacktestConfig, run_backtest_pipeline
+from quant_portfolio.pipeline.evaluation import ReportConfig, compute_metrics
 from quant_portfolio.pipeline.mc import MCConfig, run_mc_pipeline
 from quant_portfolio.pipeline.optimize import OptimizeConfig, run_optimize_pipeline
+from quant_portfolio.pipeline.report import run_report_pipeline
 
 
 class RiskPipelineTests(unittest.TestCase):
@@ -43,7 +46,18 @@ class RiskPipelineTests(unittest.TestCase):
         levels = 100 * np.cumprod(1 + rng.normal(0, 0.01, (24, 4)), axis=0)
         prices = pd.DataFrame(levels, index=dates, columns=list("ABCD")).rename_axis("date").reset_index()
         self.prices = prices.melt(id_vars="date", var_name="ticker", value_name="adj_close")
-        regimes = pd.DataFrame({"date": dates, "state": np.where(np.arange(24) > 15, 1, 0)})
+        self.prices["volume"] = 1_000_000
+        states = np.where(np.arange(24) > 15, 1, 0)
+        regimes = pd.DataFrame(
+            {
+                "date": dates,
+                "state": states,
+                "regime": np.where(states == 0, "calm", "choppy"),
+                "p_calm": np.where(states == 0, 0.85, 0.10),
+                "p_choppy": np.where(states == 1, 0.85, 0.10),
+                "p_stress": 0.05,
+            }
+        )
         replace_partitioned_dataset(regimes, self.base.parquet_dir / "regimes", ["year"])
         self.cfg = OptimizeConfig(max_weight=0.8, lookback=10, target_vol=0.12, sector_caps={"equity": 1.0})
         self.mc = MCConfig(n_sims=100, window=15, min_observations=5)
@@ -61,6 +75,8 @@ class RiskPipelineTests(unittest.TestCase):
         self.patch("quant_portfolio.pipeline.optimize.load_backtest_config", return_value=self.backtest)
         self.patch("quant_portfolio.pipeline.optimize.load_reference_price_dataset", return_value=self.prices)
         self.patch("quant_portfolio.pipeline.backtest.load_reference_price_dataset", return_value=self.prices)
+        self.patch("quant_portfolio.pipeline.report.load_base_config", return_value=self.base)
+        self.patch("quant_portfolio.pipeline.report.load_reference_price_dataset", return_value=self.prices)
         self.patch(
             "quant_portfolio.pipeline.data_quality.load_reference_price_dataset", return_value=self.prices
         )
@@ -138,6 +154,59 @@ class RiskPipelineTests(unittest.TestCase):
         )
         _run_all(build_parser().parse_args(["run-all", "--run-id", "order", "--skip-ingest"]))
         self.assertEqual(order, ["features", "regimes", "optimize", "backtest"])
+
+    def test_complete_html_report_persists_recalculable_ablation_artifacts(self):
+        run_id = run_optimize_pipeline("fixture-report")
+        run_backtest_pipeline(run_id)
+        output = self.base.data_dir / "report.html"
+        self.assertEqual(run_report_pipeline(run_id, output), output)
+        content = output.read_text(encoding="utf-8")
+        self.assertIn("<!doctype html>", content)
+        self.assertIn("Equal-weight buy-and-hold", content)
+        self.assertIn("Walk-forward out-of-sample", content)
+        self.assertGreaterEqual(content.count("<svg"), 5)
+        self.assertNotIn("<script", content)
+        self.assertNotIn("<link", content)
+        metrics = read_parquet_dataset(self.base.parquet_dir / "evaluation_metrics" / f"run_id={run_id}")
+        self.assertEqual(len(metrics), 6)
+        self.assertEqual(
+            set(metrics.variant),
+            {
+                "equal_weight_buy_hold",
+                "equal_weight_rebalanced",
+                "minimum_variance_no_regimes",
+                "strategy_no_overlay",
+                "strategy_no_mc",
+                "strategy_full",
+            },
+        )
+        daily = read_parquet_dataset(self.base.parquet_dir / "evaluations" / f"run_id={run_id}")
+        counts = daily.groupby("variant").date.nunique()
+        self.assertEqual(counts.nunique(), 1)
+        self.assertEqual(set(daily["sample"]), {"calibration_warmup", "out_of_sample"})
+        positions = read_parquet_dataset(self.base.parquet_dir / "evaluation_positions" / f"run_id={run_id}")
+        universes = positions.groupby("variant").ticker.apply(set)
+        self.assertTrue(all(universe == set("ABCD") | {"__CASH__"} for universe in universes))
+        manifest = json.loads((self.base.data_dir / "runs" / run_id / "report.json").read_text())
+        self.assertEqual(manifest["same_inputs_contract"]["transaction_bps"], self.backtest.transaction_bps)
+        self.assertIn("source_fingerprint", manifest["report_provenance"])
+        full_daily = daily.loc[daily.variant == "strategy_full"].set_index("date").sort_index()
+        full_positions = positions.loc[positions.variant == "strategy_full"]
+        all_trades = read_parquet_dataset(self.base.parquet_dir / "evaluation_trades" / f"run_id={run_id}")
+        full_trades = all_trades.loc[all_trades.variant == "strategy_full"]
+        evaluation_start = pd.to_datetime(full_daily.loc[full_daily["sample"] == "out_of_sample"].index.min())
+        saved_config = json.loads((self.base.data_dir / "runs" / run_id / "config.json").read_text())
+        recalculated = compute_metrics(
+            full_daily,
+            full_positions,
+            full_trades,
+            evaluation_start,
+            BacktestConfig(**saved_config["backtest"]),
+            ReportConfig(),
+        )
+        stored = metrics.loc[metrics.variant == "strategy_full"].iloc[0]
+        self.assertAlmostEqual(recalculated["CAGR"], stored.CAGR)
+        self.assertEqual(pd.Timestamp(recalculated["date_start"]), evaluation_start)
 
 
 if __name__ == "__main__":

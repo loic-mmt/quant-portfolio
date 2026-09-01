@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import argparse
 import logging
-from pathlib import Path
 import sqlite3
+from pathlib import Path
 from typing import Sequence
 
 from quant_portfolio.core.ids import ensure_run_id
-
 
 LOGGER = logging.getLogger(__name__)
 EXISTING_DATA_BEHAVIORS = ["overwrite_or_ignore", "overwrite", "error", "delete_matching"]
@@ -41,7 +40,9 @@ def build_parser() -> argparse.ArgumentParser:
         command_parser = subparsers.add_parser(command, help=help_text)
         _add_existing_data_argument(command_parser)
         if command == "mc":
-            command_parser.add_argument("--run-id", required=True, help="Existing optimization run to re-evaluate.")
+            command_parser.add_argument(
+                "--run-id", required=True, help="Existing optimization run to re-evaluate."
+            )
 
     optimize = subparsers.add_parser("optimize", help="Compute target portfolio weights.")
     optimize.add_argument("--run-id", default=None)
@@ -51,7 +52,7 @@ def build_parser() -> argparse.ArgumentParser:
     backtest.add_argument("--run-id", default=None, help="Weight run to simulate; latest when omitted.")
     backtest.add_argument("--plot", action="store_true")
 
-    report = subparsers.add_parser("report", help="Generate the currently available run report.")
+    report = subparsers.add_parser("report", help="Build ablations and a standalone HTML report.")
     report.add_argument("--run-id", default=None)
     report.add_argument("--output", type=Path, default=None)
 
@@ -123,8 +124,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
-        from quant_portfolio.core.settings import configure_logging, load_base_config
         from quant_portfolio.core.db import initialize_metadata_db
+        from quant_portfolio.core.settings import configure_logging, load_base_config
 
         base_config = load_base_config()
         configure_logging(args.log_level or base_config.log_level, verbose=args.verbose)
